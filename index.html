@@ -568,39 +568,69 @@ async function fetchOrderbookNaver(code){
 }
 
 async function fetchUniverse(){
-  // 캐시 체크
-  try{
-    const cached=localStorage.getItem(UNIVERSE_KEY);
-    const cTs=+localStorage.getItem(UNIVERSE_KEY+'_ts')||0;
-    if(cached && Date.now()-cTs<UNIVERSE_TTL){
-      const parsed=JSON.parse(cached);
-      mergeUniverse(parsed);
-      console.log('universe (cache):',parsed.length);
-      return parsed.length;
-    }
-  }catch(e){}
-  setStatus('전체 종목 마스터 로드 중... (코스피+코스닥 약 2400종목)');
+  setStatus('전체 종목 + 시세 로드 중... (코스피+코스닥 약 2400종목)');
   try{
     const r=await fetch('/api/stocks');
     if(!r.ok) throw new Error('stocks API '+r.status);
     const j=await r.json();
     const merged=[...(j.kospi||[]),...(j.kosdaq||[])];
     if(merged.length<100) throw new Error('too few stocks: '+merged.length);
-    // sector 등 메타 보강
     const enriched=merged.map(s=>({
       code:s.code, name:s.name, market:s.market||'KOSPI',
       mcap:s.market||'KOSPI', sector:'-',
-      base:0, vol:0.02, marketCap:s.marketCap||0
+      base:s.price||0, vol:0.02,
+      marketCap:s.marketCap||0,
+      // 시장 순위용 스냅샷 (시장지표 시트에서 사용)
+      _price:s.price, _change:s.change, _changePct:s.changePct,
+      _volume:s.volume, _amount:s.amount, _prevClose:s.prevClose
     }));
     mergeUniverse(enriched);
-    localStorage.setItem(UNIVERSE_KEY,JSON.stringify(enriched));
+    // 캐시 저장 (코드/이름/market만 — 가격은 매 로드마다 새로 받음)
+    const meta=enriched.map(s=>({code:s.code,name:s.name,market:s.market,marketCap:s.marketCap}));
+    localStorage.setItem(UNIVERSE_KEY,JSON.stringify(meta));
     localStorage.setItem(UNIVERSE_KEY+'_ts',Date.now());
-    setStatus(`종목 마스터 로드 완료: ${enriched.length}종목 (코스피 ${j.kospi?.length||0} + 코스닥 ${j.kosdaq?.length||0})`);
+    setStatus(`종목 + 시장 시세 로드 완료: ${enriched.length}종목 (코스피 ${j.kospi?.length||0} + 코스닥 ${j.kosdaq?.length||0})`);
     return enriched.length;
   }catch(e){
     console.error('universe fetch failed:',e);
+    // 폴백: 캐시
+    try{
+      const cached=localStorage.getItem(UNIVERSE_KEY);
+      if(cached){
+        const parsed=JSON.parse(cached);
+        mergeUniverse(parsed.map(s=>({...s,mcap:s.market||'KOSPI',sector:'-',base:0,vol:0.02})));
+        setStatus(`⚠️ API 실패 - 캐시 사용 (${parsed.length}종목, 가격 없음): ${e.message}`);
+        return parsed.length;
+      }
+    }catch(e2){}
     setStatus('전체 종목 로드 실패 (기본 28종목 사용): '+e.message);
     return 0;
+  }
+}
+
+async function fetchMarketIndex(){
+  try{
+    const r=await fetch('/api/index');
+    if(!r.ok) throw new Error('index API '+r.status);
+    const j=await r.json();
+    for(const k of ['KOSPI','KOSDAQ']){
+      if(j[k]){
+        marketIndex[k]={
+          value:j[k].value,
+          change:j[k].change,
+          changePct:j[k].changePct,
+          prev:j[k].prevClose,
+          open:j[k].open, high:j[k].high, low:j[k].low,
+          volume:j[k].volume, amount:j[k].amount,
+          marketStatus:j[k].marketStatus, tradedAt:j[k].tradedAt,
+          _real:true
+        };
+      }
+    }
+    return true;
+  }catch(e){
+    console.warn('index fetch failed:',e.message);
+    return false;
   }
 }
 
@@ -704,11 +734,13 @@ function updateMarketIndex(){
    ================================================================= */
 async function refreshAllQuotes(){
   const codes=new Set([...Object.keys(state.positions),...state.watchlist,state.selectedTicker]);
-  UNIVERSE.slice(0,12).forEach(s=>codes.add(s.code));
+  UNIVERSE.slice(0,8).forEach(s=>codes.add(s.code));
   const list=[...codes].filter(Boolean);
   setStatus('현재가 조회 중... ('+list.length+'종목)');
-  await Promise.all(list.map(c=>fetchQuote(c)));
-  updateMarketIndex();
+  await Promise.all([
+    ...list.map(c=>fetchQuote(c).catch(e=>console.warn(c,e.message))),
+    fetchMarketIndex()
+  ]);
   checkPendingOrders();
   state.lastQuoteFetch=Date.now();
   saveState();
@@ -1573,87 +1605,133 @@ function renderWatch(){
   return html;
 }
 
-/* ===== Market ===== */
+/* ===== Market (실시간 지수 + 종목 순위) ===== */
 function renderMarket(){
   const cols=10;
   let html=gridHeader(cols);
-  html+=rowStart(1)+`<td class="header-cell" colspan="${cols}">▣ 시장 지표</td>`+rowEnd();
+  const indexLive=marketIndex.KOSPI._real||marketIndex.KOSDAQ._real;
+  html+=rowStart(1)+`<td class="header-cell" colspan="${cols}">▣ 시장 지표 ${indexLive?'(실시간 네이버)':'(mock)'}</td>`+rowEnd();
   html+=blankRow(2,cols);
   html+=rowStart(3)+
     `<td class="subheader">지수</td><td class="subheader">현재</td><td class="subheader">전일대비</td>`+
-    `<td class="subheader">등락률</td><td class="subheader">전일종가</td>`+blank(cols,6)+rowEnd();
+    `<td class="subheader">등락률</td><td class="subheader">시가</td><td class="subheader">고가</td>`+
+    `<td class="subheader">저가</td><td class="subheader">거래량(천주)</td><td class="subheader">거래대금(백만)</td>`+
+    `<td class="subheader">상태</td>`+rowEnd();
   let r=4;
   for(const k of ['KOSPI','KOSDAQ']){
     const m=marketIndex[k];
     const c=m.change>=0?'pos-pl':'neg-pl';
     html+=rowStart(r++)+
       `<td class="center">${k}</td>`+
-      `<td class="big-num ${c}">${m.value.toFixed(2)}</td>`+
-      `<td class="right ${c}">${(m.change>=0?'+':'')+m.change.toFixed(2)}</td>`+
-      `<td class="right ${c}">${fmtPct(m.changePct)}</td>`+
-      `<td class="right">${m.prev.toFixed(2)}</td>`+blank(cols,6)+rowEnd();
+      `<td class="big-num ${c}">${m.value!=null?m.value.toFixed(2):'-'}</td>`+
+      `<td class="right ${c}">${m.change!=null?((m.change>=0?'+':'')+m.change.toFixed(2)):'-'}</td>`+
+      `<td class="right ${c}">${m.changePct!=null?fmtPct(m.changePct):'-'}</td>`+
+      `<td class="right">${m.open!=null?m.open.toFixed(2):'-'}</td>`+
+      `<td class="right pos-pl">${m.high!=null?m.high.toFixed(2):'-'}</td>`+
+      `<td class="right neg-pl">${m.low!=null?m.low.toFixed(2):'-'}</td>`+
+      `<td class="right">${m.volume!=null?fmt(m.volume/1000):'-'}</td>`+
+      `<td class="right">${m.amount!=null?fmt(m.amount/1_000_000):'-'}</td>`+
+      `<td class="center mute">${m.marketStatus||'-'}</td>`+rowEnd();
   }
   html+=blankRow(r++,cols);
 
-  // 등락 상위
-  html+=rowStart(r++)+`<td class="header-cell" colspan="${cols}">▣ 상승률 TOP</td>`+rowEnd();
+  // UNIVERSE에 시세가 들어있으면 그대로 사용 (api/stocks가 반환)
+  const withPrice=UNIVERSE.filter(s=>s._price && s._changePct!=null);
+
+  // 상승률 TOP 10
+  html+=rowStart(r++)+`<td class="header-cell" colspan="${cols}">▣ 상승률 TOP 10</td>`+rowEnd();
   html+=rowStart(r++)+
     `<td class="subheader">순위</td><td class="subheader">종목코드</td><td class="subheader">종목명</td>`+
-    `<td class="subheader">현재가</td><td class="subheader">등락률</td><td class="subheader">거래량</td>`+
-    `<td class="subheader">시장</td><td class="subheader">업종</td>`+blank(cols,9)+rowEnd();
-  const all=UNIVERSE.slice(0,100).map(s=>{const q=quoteCache[s.code];return {s,q};}).filter(x=>x.q);
-  const top=[...all].sort((a,b)=>b.q.changePct-a.q.changePct).slice(0,8);
-  top.forEach((x,i)=>{
+    `<td class="subheader">현재가</td><td class="subheader">전일대비</td><td class="subheader">등락률</td>`+
+    `<td class="subheader">거래량</td><td class="subheader">거래대금(백만)</td>`+
+    `<td class="subheader">시장</td><td class="subheader">시총(백만)</td>`+rowEnd();
+  const gainers=[...withPrice].sort((a,b)=>b._changePct-a._changePct).slice(0,10);
+  if(gainers.length===0){
+    html+=rowStart(r++)+`<td class="mute center" colspan="${cols}">(시세 데이터 로드 안됨)</td>`+rowEnd();
+  }else gainers.forEach((s,i)=>{
     html+=`<tr${i%2?' class="alt"':''}><th class="row-header">${r++}</th>`+
       `<td class="center">${i+1}</td>`+
-      `<td class="center">${x.s.code}</td>`+
-      `<td>${x.s.name}</td>`+
-      `<td class="right">${fmt(x.q.price)}</td>`+
-      `<td class="right pos-pl">${fmtPct(x.q.changePct)}</td>`+
-      `<td class="right">${fmt(x.q.volume)}</td>`+
-      `<td class="center mute">${x.s.mcap}</td>`+
-      `<td class="center mute">${x.s.sector}</td>`+blank(cols,9)+rowEnd();
+      `<td class="center">${s.code}</td>`+
+      `<td>${s.name}</td>`+
+      `<td class="right">${fmt(s._price)}</td>`+
+      `<td class="right pos-pl">${(s._change>=0?'+':'')+fmt(s._change)}</td>`+
+      `<td class="right pos-pl">${fmtPct(s._changePct)}</td>`+
+      `<td class="right">${fmt(s._volume)}</td>`+
+      `<td class="right">${fmt(s._amount)}</td>`+
+      `<td class="center mute">${s.market}</td>`+
+      `<td class="right mute">${fmt(s.marketCap)}</td>`+rowEnd();
   });
   html+=blankRow(r++,cols);
 
-  // 하락률 TOP
-  html+=rowStart(r++)+`<td class="header-cell" colspan="${cols}">▣ 하락률 TOP</td>`+rowEnd();
+  // 하락률 TOP 10
+  html+=rowStart(r++)+`<td class="header-cell" colspan="${cols}">▣ 하락률 TOP 10</td>`+rowEnd();
   html+=rowStart(r++)+
     `<td class="subheader">순위</td><td class="subheader">종목코드</td><td class="subheader">종목명</td>`+
-    `<td class="subheader">현재가</td><td class="subheader">등락률</td><td class="subheader">거래량</td>`+
-    `<td class="subheader">시장</td><td class="subheader">업종</td>`+blank(cols,9)+rowEnd();
-  const bot=[...all].sort((a,b)=>a.q.changePct-b.q.changePct).slice(0,8);
-  bot.forEach((x,i)=>{
+    `<td class="subheader">현재가</td><td class="subheader">전일대비</td><td class="subheader">등락률</td>`+
+    `<td class="subheader">거래량</td><td class="subheader">거래대금(백만)</td>`+
+    `<td class="subheader">시장</td><td class="subheader">시총(백만)</td>`+rowEnd();
+  const losers=[...withPrice].sort((a,b)=>a._changePct-b._changePct).slice(0,10);
+  if(losers.length===0){
+    html+=rowStart(r++)+`<td class="mute center" colspan="${cols}">(시세 데이터 로드 안됨)</td>`+rowEnd();
+  }else losers.forEach((s,i)=>{
     html+=`<tr${i%2?' class="alt"':''}><th class="row-header">${r++}</th>`+
       `<td class="center">${i+1}</td>`+
-      `<td class="center">${x.s.code}</td>`+
-      `<td>${x.s.name}</td>`+
-      `<td class="right">${fmt(x.q.price)}</td>`+
-      `<td class="right neg-pl">${fmtPct(x.q.changePct)}</td>`+
-      `<td class="right">${fmt(x.q.volume)}</td>`+
-      `<td class="center mute">${x.s.mcap}</td>`+
-      `<td class="center mute">${x.s.sector}</td>`+blank(cols,9)+rowEnd();
+      `<td class="center">${s.code}</td>`+
+      `<td>${s.name}</td>`+
+      `<td class="right">${fmt(s._price)}</td>`+
+      `<td class="right neg-pl">${fmt(s._change)}</td>`+
+      `<td class="right neg-pl">${fmtPct(s._changePct)}</td>`+
+      `<td class="right">${fmt(s._volume)}</td>`+
+      `<td class="right">${fmt(s._amount)}</td>`+
+      `<td class="center mute">${s.market}</td>`+
+      `<td class="right mute">${fmt(s.marketCap)}</td>`+rowEnd();
   });
   html+=blankRow(r++,cols);
 
-  // 거래대금 TOP
-  html+=rowStart(r++)+`<td class="header-cell" colspan="${cols}">▣ 거래대금 TOP</td>`+rowEnd();
+  // 거래대금 TOP 10
+  html+=rowStart(r++)+`<td class="header-cell" colspan="${cols}">▣ 거래대금 TOP 10 (백만원)</td>`+rowEnd();
   html+=rowStart(r++)+
-    `<td class="subheader">순위</td><td class="subheader">종목</td><td class="subheader">현재가</td>`+
-    `<td class="subheader">등락률</td><td class="subheader">거래량</td><td class="subheader">거래대금</td>`+
-    blank(cols,7)+rowEnd();
-  const byAmt=[...all].sort((a,b)=>b.q.amount-a.q.amount).slice(0,8);
-  byAmt.forEach((x,i)=>{
-    const c=x.q.change>=0?'pos-pl':'neg-pl';
+    `<td class="subheader">순위</td><td class="subheader">종목코드</td><td class="subheader">종목명</td>`+
+    `<td class="subheader">현재가</td><td class="subheader">등락률</td><td class="subheader">거래량</td>`+
+    `<td class="subheader">거래대금</td><td class="subheader">시장</td><td class="subheader">시총</td><td class="subheader">비중</td>`+rowEnd();
+  const byAmt=[...withPrice].sort((a,b)=>(b._amount||0)-(a._amount||0)).slice(0,10);
+  const totalAmt=withPrice.reduce((s,x)=>s+(x._amount||0),0)||1;
+  byAmt.forEach((s,i)=>{
+    const c=s._change>=0?'pos-pl':'neg-pl';
     html+=`<tr${i%2?' class="alt"':''}><th class="row-header">${r++}</th>`+
       `<td class="center">${i+1}</td>`+
-      `<td>${x.s.code} ${x.s.name}</td>`+
-      `<td class="right">${fmt(x.q.price)}</td>`+
-      `<td class="right ${c}">${fmtPct(x.q.changePct)}</td>`+
-      `<td class="right">${fmt(x.q.volume)}</td>`+
-      `<td class="right">${fmt(x.q.amount)}</td>`+blank(cols,7)+rowEnd();
+      `<td class="center">${s.code}</td>`+
+      `<td>${s.name}</td>`+
+      `<td class="right">${fmt(s._price)}</td>`+
+      `<td class="right ${c}">${fmtPct(s._changePct)}</td>`+
+      `<td class="right">${fmt(s._volume)}</td>`+
+      `<td class="right">${fmt(s._amount)}</td>`+
+      `<td class="center mute">${s.market}</td>`+
+      `<td class="right mute">${fmt(s.marketCap)}</td>`+rowEnd();
   });
-  while(r<32){html+=blankRow(r++,cols);}
+  html+=blankRow(r++,cols);
+
+  // 시가총액 TOP 10
+  html+=rowStart(r++)+`<td class="header-cell" colspan="${cols}">▣ 시가총액 TOP 10 (백만원)</td>`+rowEnd();
+  html+=rowStart(r++)+
+    `<td class="subheader">순위</td><td class="subheader">종목코드</td><td class="subheader">종목명</td>`+
+    `<td class="subheader">현재가</td><td class="subheader">등락률</td><td class="subheader">시총</td>`+
+    `<td class="subheader">거래대금</td><td class="subheader">거래량</td><td class="subheader">시장</td><td class="subheader">비고</td>`+rowEnd();
+  const byMcap=[...withPrice].sort((a,b)=>(b.marketCap||0)-(a.marketCap||0)).slice(0,10);
+  byMcap.forEach((s,i)=>{
+    const c=(s._change||0)>=0?'pos-pl':'neg-pl';
+    html+=`<tr${i%2?' class="alt"':''}><th class="row-header">${r++}</th>`+
+      `<td class="center">${i+1}</td>`+
+      `<td class="center">${s.code}</td>`+
+      `<td>${s.name}</td>`+
+      `<td class="right">${fmt(s._price)}</td>`+
+      `<td class="right ${c}">${fmtPct(s._changePct||0)}</td>`+
+      `<td class="right">${fmt(s.marketCap)}</td>`+
+      `<td class="right">${fmt(s._amount)}</td>`+
+      `<td class="right">${fmt(s._volume)}</td>`+
+      `<td class="center mute">${s.market}</td>`+rowEnd();
+  });
+  while(r<50){html+=blankRow(r++,cols);}
   html+='</table>';
   return html;
 }
@@ -1989,10 +2067,8 @@ document.addEventListener('keydown',e=>{
   await fetchUniverse();
   render();
 
-  // 2단계: KOSPI/KOSDAQ 지수
-  updateMarketIndex();
-  marketIndex.KOSPI.prev=marketIndex.KOSPI.value-marketIndex.KOSPI.change;
-  marketIndex.KOSDAQ.prev=marketIndex.KOSDAQ.value-marketIndex.KOSDAQ.change;
+  // 2단계: KOSPI/KOSDAQ 실시간 지수
+  await fetchMarketIndex();
 
   // 3단계: 현재 시세 로드 (선택종목 + 관심종목 + 보유 + 시총 TOP 12)
   const priority=[...new Set([
