@@ -8,9 +8,10 @@
 mta-trading-deploy/
 ├── index.html         ← 엑셀 위장 모의투자 툴 (단일 페이지)
 ├── api/
-│   ├── quote.js       ← /api/quote?code=005930  (현재가)
+│   ├── quote.js       ← /api/quote?code=005930  (개별 현재가 + 시고저)
 │   ├── orderbook.js   ← /api/orderbook?code=005930  (5단계 호가)
-│   └── stocks.js      ← /api/stocks  (코스피/코스닥 전체 종목 마스터)
+│   ├── stocks.js      ← /api/stocks  (코스피/코스닥 전체 + 가격/등락률/거래량 일괄)
+│   └── index.js       ← /api/index  (KOSPI/KOSDAQ 실시간 지수)
 ├── vercel.json
 ├── package.json
 └── README.md
@@ -67,12 +68,15 @@ mta-trading-deploy/
 
 ## 검증된 네이버 엔드포인트 (2026-06 기준)
 
-- 시세: `https://polling.finance.naver.com/api/realtime/domestic/stock/{code}`
+- 종목 시세: `https://polling.finance.naver.com/api/realtime/domestic/stock/{code}`
   - 필드: `closePriceRaw`, `compareToPreviousClosePriceRaw`, `openPriceRaw`, `highPriceRaw`, `lowPriceRaw`, `accumulatedTradingVolumeRaw`, `fluctuationsRatioRaw`
+- **지수 시세**: `https://polling.finance.naver.com/api/realtime/domestic/index/{KOSPI|KOSDAQ}`
+  - 동일 필드 구조
 - 5호가: `https://m.stock.naver.com/api/stock/{code}/askingPrice`
   - 응답: `{sellInfo: [{price, count, rate}×5], buyInfos: [{price, count, rate}×5], totalSell, totalBuy, lastClosePrice}`
-- 종목 마스터: `https://m.stock.naver.com/api/stocks/marketValue/{KOSPI|KOSDAQ}?page=N&pageSize=100`
-  - 응답: `{stocks: [{itemCode, stockName, marketValue, ...}]}`
+- 종목 마스터 + 시세: `https://m.stock.naver.com/api/stocks/marketValue/{KOSPI|KOSDAQ}?page=N&pageSize=100`
+  - 응답: `{stocks: [{itemCode, stockName, closePrice, compareToPreviousClosePrice, fluctuationsRatio, accumulatedTradingVolume, accumulatedTradingValue, marketValue, ...}]}`
+  - 시장지표 시트는 이 데이터 그대로 정렬해서 상승/하락/거래대금 순위 산출
 
 ## 주의
 

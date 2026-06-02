@@ -188,6 +188,12 @@
 
   tr.alt td:not(.label):not(.header-cell):not(.subheader):not(.ask-row):not(.ask-price):not(.bid-row):not(.bid-price):not(.cur-price-row){background:#fafbfc;}
 
+  /* 종목 검색 입력 */
+  table.grid td.input-cell input.ticker-input{text-align:left;font-size:11px;}
+  table.grid td.input-cell input.ticker-input::-webkit-calendar-picker-indicator{
+    color:#217346;cursor:pointer;
+  }
+
   /* chart */
   svg.chart{background:#fff;display:block;}
   svg.chart .grid-line{stroke:#eee;stroke-width:1;}
@@ -328,12 +334,16 @@
 
 <div id="modalRoot"></div>
 
+<!-- 공유 종목 검색 datalist (UNIVERSE 로드 후 JS로 채움) -->
+<datalist id="UNIVERSE_DL"></datalist>
+<datalist id="HELD_DL"></datalist>
+
 <script>
 /* =================================================================
    STATE
    ================================================================= */
 const LS_KEY='_mta_state_v4';
-const UNIVERSE_KEY='_mta_universe_v1';
+const UNIVERSE_KEY='_mta_universe_v2';
 const UNIVERSE_TTL=24*60*60*1000;
 
 const DEFAULT_STATE={
@@ -568,32 +578,39 @@ async function fetchOrderbookNaver(code){
 }
 
 async function fetchUniverse(){
-  setStatus('전체 종목 + 시세 로드 중... (코스피+코스닥 약 2400종목)');
+  setStatus('KRX 전종목 + 시세 로드 중... (코스피·코스닥·ETF·ETN 약 3700종목)');
   try{
     const r=await fetch('/api/stocks');
     if(!r.ok) throw new Error('stocks API '+r.status);
     const j=await r.json();
-    const merged=[...(j.kospi||[]),...(j.kosdaq||[])];
+    const merged=[
+      ...(j.kospi||[]),
+      ...(j.kosdaq||[]),
+      ...(j.etf||[]),
+      ...(j.etn||[])
+    ];
     if(merged.length<100) throw new Error('too few stocks: '+merged.length);
     const enriched=merged.map(s=>({
-      code:s.code, name:s.name, market:s.market||'KOSPI',
-      mcap:s.market||'KOSPI', sector:'-',
+      code:s.code, name:s.name,
+      market:s.market||'KOSPI',         // KOSPI / KOSDAQ / ETF / ETN
+      type:s.type||'STOCK',              // STOCK / ETF / ETN
+      mcap:s.market||'KOSPI',
+      sector:s.subCategory||'-',
       base:s.price||0, vol:0.02,
       marketCap:s.marketCap||0,
-      // 시장 순위용 스냅샷 (시장지표 시트에서 사용)
       _price:s.price, _change:s.change, _changePct:s.changePct,
-      _volume:s.volume, _amount:s.amount, _prevClose:s.prevClose
+      _volume:s.volume, _amount:s.amount, _prevClose:s.prevClose,
+      _nav:s.nav
     }));
     mergeUniverse(enriched);
-    // 캐시 저장 (코드/이름/market만 — 가격은 매 로드마다 새로 받음)
-    const meta=enriched.map(s=>({code:s.code,name:s.name,market:s.market,marketCap:s.marketCap}));
+    const meta=enriched.map(s=>({code:s.code,name:s.name,market:s.market,type:s.type,marketCap:s.marketCap}));
     localStorage.setItem(UNIVERSE_KEY,JSON.stringify(meta));
     localStorage.setItem(UNIVERSE_KEY+'_ts',Date.now());
-    setStatus(`종목 + 시장 시세 로드 완료: ${enriched.length}종목 (코스피 ${j.kospi?.length||0} + 코스닥 ${j.kosdaq?.length||0})`);
+    const c=j.counts||{};
+    setStatus(`✅ KRX 전종목 로드 완료: 코스피 ${c.kospi||0} + 코스닥 ${c.kosdaq||0} + ETF ${c.etf||0} + ETN ${c.etn||0} = ${enriched.length}종목`);
     return enriched.length;
   }catch(e){
     console.error('universe fetch failed:',e);
-    // 폴백: 캐시
     try{
       const cached=localStorage.getItem(UNIVERSE_KEY);
       if(cached){
@@ -634,28 +651,64 @@ async function fetchMarketIndex(){
   }
 }
 
-function tickerOptions(selected){
-  // 시총 TOP 300 + 보유 + 관심 + 선택종목
-  const codes=new Set();
-  if(selected) codes.add(selected);
-  Object.keys(state.positions).forEach(c=>codes.add(c));
-  state.watchlist.forEach(c=>codes.add(c));
-  UNIVERSE.slice(0,300).forEach(s=>codes.add(s.code));
-  const list=[...codes].map(c=>STOCK_BY_CODE[c]).filter(Boolean);
-  list.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0));
-  return list.map(s=>`<option value="${s.code}"${s.code===selected?' selected':''}>${s.code} ${s.name}${s.market?' ['+s.market+']':''}</option>`).join('');
+/* ===== 종목 검색 (datalist) ===== */
+function tickerLabel(code){
+  const s=STOCK_BY_CODE[code];
+  return s?`${code} ${s.name}${s.market?' ['+s.market+']':''}`:code;
 }
-function tickerOptionsExclude(excludeSet){
-  const codes=new Set();
-  UNIVERSE.slice(0,500).forEach(s=>{if(!excludeSet.has(s.code)) codes.add(s.code);});
-  const list=[...codes].map(c=>STOCK_BY_CODE[c]).filter(Boolean);
-  list.sort((a,b)=>(b.marketCap||0)-(a.marketCap||0));
-  return list.map(s=>`<option value="${s.code}">${s.code} ${s.name}${s.market?' ['+s.market+']':''}</option>`).join('');
+function parseTickerInput(val){
+  if(!val) return '';
+  const s=String(val).trim();
+  // 1. 6자리 코드 추출 (어디든)
+  const m=s.match(/\b([0-9A-Z]{6})\b/);
+  if(m && STOCK_BY_CODE[m[1]]) return m[1];
+  // 2. 종목명 완전일치
+  const exact=UNIVERSE.find(x=>x.name===s);
+  if(exact) return exact.code;
+  // 3. 종목명 부분일치 (첫번째)
+  const partial=UNIVERSE.find(x=>x.name&&x.name.includes(s));
+  if(partial) return partial.code;
+  return '';
+}
+function updateUniverseDatalist(){
+  const dl=document.getElementById('UNIVERSE_DL');
+  if(!dl) return;
+  dl.innerHTML=UNIVERSE.map(s=>`<option value="${s.code} ${s.name}${s.market?' ['+s.market+']':''}"></option>`).join('');
+}
+function updateHeldDatalist(){
+  const dl=document.getElementById('HELD_DL');
+  if(!dl) return;
+  dl.innerHTML=Object.keys(state.positions).map(code=>{
+    const s=STOCK_BY_CODE[code];const p=state.positions[code];
+    return `<option value="${code} ${s?.name||code} (보유 ${p.qty}주, 평단 ${fmt(p.avgPrice)})"></option>`;
+  }).join('');
+}
+function tickerInput(id,selectedCode,opts){
+  opts=opts||{};
+  const list=opts.held?'HELD_DL':'UNIVERSE_DL';
+  const ph=opts.placeholder||'종목코드 또는 종목명 입력';
+  const val=selectedCode?tickerLabel(selectedCode):'';
+  return `<input id="${id}" type="text" list="${list}" value="${val}" placeholder="${ph}" autocomplete="off" class="ticker-input"/>`;
+}
+function attachTickerInput(id,onCode){
+  const el=document.getElementById(id);
+  if(!el) return;
+  const handler=e=>{
+    const code=parseTickerInput(e.target.value);
+    if(!code){
+      if(e.target.value.trim()) alert('종목을 찾을 수 없습니다.\n입력: '+e.target.value+'\n6자리 종목코드나 정확한 종목명을 입력하세요.');
+      return;
+    }
+    // 정상화: 입력 텍스트를 표준 라벨로 교체
+    e.target.value=tickerLabel(code);
+    onCode(code);
+  };
+  el.addEventListener('change',handler);
+  el.addEventListener('blur',handler);
 }
 
 function mergeUniverse(list){
   for(const s of list){
-    // 기존 hardcoded 정보가 있으면 보존 (sector 등)
     const existing=STOCK_BY_CODE[s.code];
     if(existing){
       STOCK_BY_CODE[s.code]={...existing,...s,sector:existing.sector||s.sector};
@@ -663,8 +716,8 @@ function mergeUniverse(list){
       STOCK_BY_CODE[s.code]=s;
     }
   }
-  // UNIVERSE 재구성: 시가총액 큰 순
   UNIVERSE=Object.values(STOCK_BY_CODE).sort((a,b)=>(b.marketCap||0)-(a.marketCap||0));
+  updateUniverseDatalist();
 }
 
 /* =================================================================
@@ -786,27 +839,47 @@ function placeOrder(side,orderType,code,qty,limitPrice){
   // immediate fill if marketable
   if(side==='BUY'&&limitPrice>=q.price){return executeBuy(code,qty,Math.min(limitPrice,q.price));}
   if(side==='SELL'&&limitPrice<=q.price){return executeSell(code,qty,Math.max(limitPrice,q.price));}
-  // otherwise add to pending
+  // 미체결로 보류 — 체결 시점에 현금/포지션 차감 (사전 차감 X)
+  const gross=limitPrice*qty;
+  const fee=Math.floor(gross*state.config.feeRate);
   if(side==='BUY'){
-    const gross=limitPrice*qty;
-    const fee=Math.floor(gross*state.config.feeRate);
-    if(gross+fee>state.cash) return alert('예수금 부족 (지정가 매수)');
-    state.cash-=(gross+fee);
+    const total=gross+fee;
+    const committed=pendingBuyCommitted();
+    if(total+committed>state.cash){
+      if(!confirm(`주문대금 ${fmt(total)} + 기존 미체결 ${fmt(committed)} 합계가 예수금 ${fmt(state.cash)} 초과.\n체결 시점에 자금 부족하면 자동 취소됩니다. 계속하시겠습니까?`)) return;
+    }
   }else{
     const cur=state.positions[code];
-    if(!cur||cur.qty<qty) return alert('보유수량이 부족합니다.');
-    cur.qty-=qty;
-    if(cur.qty===0){
-      // 평단/수량 보관용 placeholder 유지를 위해 임시 처리
+    const committedQty=pendingSellQty(code);
+    const avail=(cur?cur.qty:0)-committedQty;
+    if(qty>avail){
+      if(!confirm(`매도수량 ${qty} > 가용수량 ${avail} (보유 ${cur?cur.qty:0} - 미체결매도 ${committedQty}).\n체결 시점에 보유수량 부족하면 자동 취소됩니다. 계속하시겠습니까?`)) return;
     }
   }
   state.pendingOrders.unshift({
     id:nextOrderId(),side,ticker:code,name:stock.name,
-    qty,price:limitPrice,fee:Math.floor(limitPrice*qty*state.config.feeRate),
+    qty,price:limitPrice,fee,
     time:Date.now()
   });
   saveState();render();
-  setStatus(`지정가 ${side==='BUY'?'매수':'매도'} 접수: ${stock.name} ${qty}주 @ ${fmt(limitPrice)}`);
+  setStatus(`지정가 ${side==='BUY'?'매수':'매도'} 접수: ${stock.name} ${qty}주 @ ${fmt(limitPrice)} (체결 시 차감)`);
+}
+
+// 미체결 매수 주문의 예약 자금 합계
+function pendingBuyCommitted(){
+  let sum=0;
+  for(const o of state.pendingOrders){
+    if(o.side==='BUY') sum+=o.price*o.qty+o.fee;
+  }
+  return sum;
+}
+// 종목별 미체결 매도 수량 합계
+function pendingSellQty(code){
+  let sum=0;
+  for(const o of state.pendingOrders){
+    if(o.side==='SELL'&&o.ticker===code) sum+=o.qty;
+  }
+  return sum;
 }
 
 function executeBuy(code,qty,price){
@@ -847,18 +920,34 @@ function checkPendingOrders(){
     const q=quoteCache[o.ticker];
     if(!q){remain.push(o);continue;}
     if(o.side==='BUY'&&q.price<=o.price){
-      // execute buy at o.price (limit better or equal)
+      // 체결 시점에 현금 차감
+      const gross=o.price*o.qty;
+      const fee=o.fee;
+      const total=gross+fee;
+      if(total>state.cash){
+        setStatus(`⚠️ 지정가 매수 체결 실패 (예수금 부족 ${fmt(total)} > ${fmt(state.cash)}): ${o.name} 주문 자동 취소`);
+        continue;  // remain에 추가하지 않음 → 제거됨
+      }
+      state.cash-=total;
       const cur=state.positions[o.ticker]||{qty:0,avgPrice:0};
       const newQty=cur.qty+o.qty;
       const newAvg=Math.round((cur.qty*cur.avgPrice+o.price*o.qty)/newQty);
       state.positions[o.ticker]={qty:newQty,avgPrice:newAvg};
-      state.history.unshift({type:'BUY',orderType:'LIMIT',ticker:o.ticker,name:o.name,qty:o.qty,price:o.price,fee:o.fee,tax:0,total:o.price*o.qty+o.fee,time:Date.now()});
+      state.history.unshift({type:'BUY',orderType:'LIMIT',ticker:o.ticker,name:o.name,qty:o.qty,price:o.price,fee,tax:0,total,time:Date.now()});
       setStatus(`지정가 매수 체결: ${o.name} ${o.qty}주 @ ${fmt(o.price)}`);
     }else if(o.side==='SELL'&&q.price>=o.price){
+      // 체결 시점에 보유수량 차감
+      const cur=state.positions[o.ticker];
+      if(!cur||cur.qty<o.qty){
+        setStatus(`⚠️ 지정가 매도 체결 실패 (보유수량 부족): ${o.name} 주문 자동 취소`);
+        continue;
+      }
       const gross=o.price*o.qty;
       const fee=Math.floor(gross*state.config.feeRate);
       const tax=Math.floor(gross*state.config.taxRate);
       const net=gross-fee-tax;
+      cur.qty-=o.qty;
+      if(cur.qty===0) delete state.positions[o.ticker];
       state.cash+=net;
       state.history.unshift({type:'SELL',orderType:'LIMIT',ticker:o.ticker,name:o.name,qty:o.qty,price:o.price,fee,tax,total:net,time:Date.now()});
       setStatus(`지정가 매도 체결: ${o.name} ${o.qty}주 @ ${fmt(o.price)}`);
@@ -872,14 +961,7 @@ function checkPendingOrders(){
 function cancelPending(id){
   const idx=state.pendingOrders.findIndex(o=>o.id===id);
   if(idx<0) return;
-  const o=state.pendingOrders[idx];
-  if(o.side==='BUY'){
-    state.cash+=o.price*o.qty+o.fee;
-  }else{
-    const cur=state.positions[o.ticker]||{qty:0,avgPrice:0};
-    cur.qty+=o.qty;
-    state.positions[o.ticker]=cur;
-  }
+  // 미체결은 사전 차감이 없으므로 단순 제거
   state.pendingOrders.splice(idx,1);
   saveState();render();
   setStatus('주문 취소 완료');
@@ -924,6 +1006,7 @@ function blankRow(n,cols){return rowStart(n)+blank(cols)+rowEnd();}
 
 function render(){
   const area=document.getElementById('sheetArea');
+  updateHeldDatalist();
   document.querySelectorAll('.sheet-tab').forEach(t=>{
     t.classList.toggle('active',t.dataset.sheet===state.currentSheet);
   });
@@ -976,22 +1059,24 @@ function renderDashboard(){
   html+=rowStart(1)+`<td class="header-cell" colspan="${cols}">▣ 2026년 자산 운용 종합 현황 — 최종 갱신: ${fmtDate(state.lastQuoteFetch||Date.now())}</td>`+rowEnd();
   html+=blankRow(2,cols);
   html+=rowStart(3)+
-    `<td class="subheader">시드머니</td><td class="subheader">예수금</td><td class="subheader">주식평가액</td>`+
+    `<td class="subheader">시드머니</td><td class="subheader">예수금</td><td class="subheader">주문가능</td><td class="subheader">주식평가</td>`+
     `<td class="subheader">총자산</td><td class="subheader">평가손익</td><td class="subheader">수익률</td>`+
-    `<td class="subheader">금일손익</td><td class="subheader">보유종목</td><td class="subheader">미체결</td><td class="subheader">매매횟수</td>`+rowEnd();
+    `<td class="subheader">금일손익</td><td class="subheader">보유종목</td><td class="subheader">미체결</td>`+rowEnd();
   const plCls=p.totalPl>=0?'pos-pl':'neg-pl';
   const dCls=p.dayPL>=0?'pos-pl':'neg-pl';
+  const pendingBuyAmt=pendingBuyCommitted();
+  const availCash=state.cash-pendingBuyAmt;
   html+=rowStart(4)+
     `<td class="right">${fmt(state.seedMoney)}</td>`+
     `<td class="right">${fmt(state.cash)}</td>`+
+    `<td class="right" ${pendingBuyAmt?'style="color:#dd8800;"':''}>${fmt(availCash)}</td>`+
     `<td class="right">${fmt(p.positionValue)}</td>`+
     `<td class="right">${fmt(p.totalAsset)}</td>`+
     `<td class="right ${plCls}">${fmt(p.totalPl)}</td>`+
     `<td class="right ${plCls}">${fmtPct(p.totalPlPct)}</td>`+
     `<td class="right ${dCls}">${fmt(p.dayPL)}</td>`+
     `<td class="right">${p.rows.length}</td>`+
-    `<td class="right">${state.pendingOrders.length}</td>`+
-    `<td class="right">${state.history.length}</td>`+rowEnd();
+    `<td class="right">${state.pendingOrders.length}</td>`+rowEnd();
   html+=blankRow(5,cols);
 
   // 시장 요약
@@ -1054,7 +1139,7 @@ function renderQuoteDetail(){
   html+=blankRow(2,cols);
   html+=rowStart(3)+
     `<td class="subheader">종목선택</td>`+
-    `<td class="input-cell" colspan="3"><select id="qTicker">${tickerOptions(code)}</select></td>`+
+    `<td class="input-cell" colspan="3">${tickerInput('qTicker',code)}</td>`+
     `<td class="subheader">시장</td><td class="center">${stock.mcap||'-'}</td>`+
     `<td class="subheader">업종</td><td class="center">${stock.sector||'-'}</td>`+
     `<td class="btn-action" onclick="refreshAllQuotes()">새로고침</td>`+blank(cols,10)+rowEnd();
@@ -1145,7 +1230,7 @@ function renderChart(){
   html+=rowStart(1)+`<td class="header-cell" colspan="${cols}">▣ 일봉 차트 — ${code} ${stock.name||''}</td>`+rowEnd();
   html+=rowStart(2)+
     `<td class="subheader">종목</td>`+
-    `<td class="input-cell" colspan="3"><select id="cTicker">${tickerOptions(code)}</select></td>`+
+    `<td class="input-cell" colspan="3">${tickerInput('cTicker',code)}</td>`+
     `<td class="subheader">현재가</td><td class="right ${q&&q.change>=0?'pos-pl':'neg-pl'}">${q?fmt(q.price):'-'}</td>`+
     `<td class="subheader">등락률</td><td class="right ${q&&q.change>=0?'pos-pl':'neg-pl'}">${q?fmtPct(q.changePct):'-'}</td>`+
     `<td class="btn-action" onclick="regenChart()">차트 재생성</td>`+
@@ -1269,7 +1354,7 @@ function renderBuy(){
   html+=blankRow(2,cols);
   html+=rowStart(3)+
     `<td class="subheader">종목</td>`+
-    `<td class="input-cell" colspan="3"><select id="bTicker">${tickerOptions(code)}</select></td>`+
+    `<td class="input-cell" colspan="3">${tickerInput('bTicker',code)}</td>`+
     `<td class="subheader">주문구분</td>`+
     `<td class="input-cell"><select id="bType"><option value="MARKET">시장가</option><option value="LIMIT">지정가</option></select></td>`+
     `<td class="subheader">현재가</td>`+
@@ -1349,12 +1434,9 @@ function renderSell(){
   let html=gridHeader(cols);
   html+=rowStart(1)+`<td class="header-cell" colspan="${cols}">▣ 매도 주문</td>`+rowEnd();
   html+=blankRow(2,cols);
-  const sellOptions=heldCodes.length
-    ? heldCodes.map(c=>{const p=state.positions[c];return `<option value="${c}"${c===code?' selected':''}>${c} - ${STOCK_BY_CODE[c]?.name||c} (보유 ${p.qty}주, 평단 ${fmt(p.avgPrice)})</option>`;}).join('')
-    : '<option value="">(보유 종목 없음)</option>';
   html+=rowStart(3)+
     `<td class="subheader">종목</td>`+
-    `<td class="input-cell" colspan="3"><select id="sTicker">${sellOptions}</select></td>`+
+    `<td class="input-cell" colspan="3">${tickerInput('sTicker',heldCodes.includes(code)?code:(heldCodes[0]||''),{held:true,placeholder:heldCodes.length?'보유종목 검색':'(보유 종목 없음)'})}</td>`+
     `<td class="subheader">주문구분</td>`+
     `<td class="input-cell"><select id="sType"><option value="MARKET">시장가</option><option value="LIMIT">지정가</option></select></td>`+
     `<td class="subheader">현재가</td>`+
@@ -1571,7 +1653,7 @@ function renderWatch(){
   html+=blankRow(2,cols);
   html+=rowStart(3)+
     `<td class="subheader">종목추가</td>`+
-    `<td class="input-cell" colspan="3"><select id="wAdd"><option value="">-- 선택 --</option>${tickerOptionsExclude(new Set(state.watchlist))}</select></td>`+
+    `<td class="input-cell" colspan="3">${tickerInput('wAdd','',{placeholder:'추가할 종목 검색'})}</td>`+
     `<td class="btn-action" onclick="onAddWatch()">추가</td>`+blank(cols,6)+rowEnd();
   html+=blankRow(4,cols);
   html+=rowStart(5)+
@@ -1844,12 +1926,14 @@ function applyConfigInline(){
    ================================================================= */
 function attachHandlers(){
   if(state.currentSheet==='quote'){
-    const t=document.getElementById('qTicker');
-    if(t) t.addEventListener('change',e=>{state.selectedTicker=e.target.value;saveState();refreshAllQuotes();});
+    attachTickerInput('qTicker',code=>{
+      state.selectedTicker=code;saveState();refreshAllQuotes();
+    });
   }
   if(state.currentSheet==='chart'){
-    const t=document.getElementById('cTicker');
-    if(t) t.addEventListener('change',e=>{state.selectedTicker=e.target.value;delete chartCache[e.target.value];saveState();refreshAllQuotes();});
+    attachTickerInput('cTicker',code=>{
+      state.selectedTicker=code;delete chartCache[code];saveState();refreshAllQuotes();
+    });
   }
   if(state.currentSheet==='buy'){
     const $t=document.getElementById('bTicker');
@@ -1857,9 +1941,9 @@ function attachHandlers(){
     const $q=document.getElementById('bQty');
     const $tp=document.getElementById('bType');
     const upd=()=>{
-      const code=$t.value;
+      const code=parseTickerInput($t?$t.value:'');
       const ot=$tp.value;
-      const q=quoteCache[code];
+      const q=code?quoteCache[code]:null;
       const price=ot==='MARKET'&&q?q.price:parseInt($p.value,10)||0;
       const qty=parseInt($q.value,10)||0;
       const gross=price*qty;
@@ -1869,11 +1953,14 @@ function attachHandlers(){
       document.getElementById('bGross').textContent=fmt(gross);
       document.getElementById('bFee').textContent=fmt(fee);
       document.getElementById('bTotal').textContent=fmt(total);
-      const maxQ=q?Math.floor(state.cash/(q.price*(1+state.config.feeRate))):0;
+      const availCash=state.cash-pendingBuyCommitted();
+      const maxQ=q?Math.floor(availCash/(q.price*(1+state.config.feeRate))):0;
       document.getElementById('bMaxQty').textContent=fmt(maxQ);
     };
-    [$t,$p,$q,$tp].forEach(el=>el&&el.addEventListener('input',upd));
-    $t.addEventListener('change',()=>{state.selectedTicker=$t.value;saveState();render();});
+    [$p,$q,$tp].forEach(el=>el&&el.addEventListener('input',upd));
+    attachTickerInput('bTicker',code=>{
+      state.selectedTicker=code;saveState();render();
+    });
     upd();
   }
   if(state.currentSheet==='sell'){
@@ -1882,9 +1969,9 @@ function attachHandlers(){
     const $q=document.getElementById('sQty');
     const $tp=document.getElementById('sType');
     const upd=()=>{
-      const code=$t.value;
+      const code=parseTickerInput($t?$t.value:'');
       const ot=$tp.value;
-      const q=quoteCache[code];
+      const q=code?quoteCache[code]:null;
       const price=ot==='MARKET'&&q?q.price:parseInt($p.value,10)||0;
       const qty=parseInt($q.value,10)||0;
       const gross=price*qty;
@@ -1899,50 +1986,55 @@ function attachHandlers(){
       const cur=state.positions[code];
       const cost=cur?cur.avgPrice*qty:0;
       const pl=net-cost;
-      const plCls=pl>=0?'pos-pl':'neg-pl';
       const cell=document.getElementById('sPL');
-      cell.textContent=fmt(pl);
-      cell.className='right '+plCls;
+      if(cell){cell.textContent=fmt(pl);cell.className='right '+(pl>=0?'pos-pl':'neg-pl');}
     };
     if($t){
-      [$t,$p,$q,$tp].forEach(el=>el&&el.addEventListener('input',upd));
-      $t.addEventListener('change',()=>{state.selectedTicker=$t.value;saveState();render();});
+      [$p,$q,$tp].forEach(el=>el&&el.addEventListener('input',upd));
+      attachTickerInput('sTicker',code=>{
+        if(!state.positions[code]) return alert('보유하지 않은 종목입니다: '+tickerLabel(code));
+        state.selectedTicker=code;saveState();render();
+      });
       upd();
     }
   }
 }
 
 function onBuy(){
-  const code=document.getElementById('bTicker').value;
+  const code=parseTickerInput(document.getElementById('bTicker').value);
+  if(!code) return alert('종목을 검색해서 선택하세요.');
   const ot=document.getElementById('bType').value;
   const qty=document.getElementById('bQty').value;
   const price=document.getElementById('bPrice').value;
   placeOrder('BUY',ot,code,qty,price);
 }
 function onSell(){
-  const t=document.getElementById('sTicker');
-  if(!t||!t.value) return alert('보유종목이 없습니다.');
+  const code=parseTickerInput(document.getElementById('sTicker').value);
+  if(!code) return alert('매도할 보유 종목을 선택하세요.');
+  if(!state.positions[code]) return alert('보유하지 않은 종목입니다.');
   const ot=document.getElementById('sType').value;
   const qty=document.getElementById('sQty').value;
   const price=document.getElementById('sPrice').value;
-  placeOrder('SELL',ot,t.value,qty,price);
+  placeOrder('SELL',ot,code,qty,price);
 }
 function autoMaxBuy(){
-  const code=document.getElementById('bTicker').value;
-  const q=quoteCache[code];if(!q) return;
+  const code=parseTickerInput(document.getElementById('bTicker').value);
+  const q=code?quoteCache[code]:null;if(!q) return;
   const maxQ=Math.floor(state.cash/(q.price*(1+state.config.feeRate)));
   document.getElementById('bQty').value=Math.max(1,maxQ);
   document.getElementById('bQty').dispatchEvent(new Event('input'));
 }
 function autoMaxSell(){
-  const code=document.getElementById('sTicker').value;
-  const cur=state.positions[code];if(!cur) return;
+  const code=parseTickerInput(document.getElementById('sTicker').value);
+  const cur=code?state.positions[code]:null;if(!cur) return;
   document.getElementById('sQty').value=cur.qty;
   document.getElementById('sQty').dispatchEvent(new Event('input'));
 }
 function onAddWatch(){
-  const v=document.getElementById('wAdd').value;
-  if(v) addWatch(v);
+  const code=parseTickerInput(document.getElementById('wAdd').value);
+  if(!code) return alert('종목을 검색해서 선택하세요.');
+  addWatch(code);
+  const el=document.getElementById('wAdd');if(el) el.value='';
 }
 
 function switchSheet(name){
