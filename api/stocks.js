@@ -55,9 +55,9 @@ export default async function handler(req, res) {
     for (const s of flat) {
       if (seen.has(s.itemCode)) continue;
       seen.add(s.itemCode);
-      const sign = (s.compareToPreviousPrice?.code === '5' || s.compareToPreviousPrice?.code === '4') ? -1 : 1;
+      // 네이버 필드는 이미 부호 포함 (하락 시 음수). 부호 곱하면 안 됨.
       const price = num(s.closePrice);
-      const change = num(s.compareToPreviousClosePrice) * sign;
+      const change = num(s.compareToPreviousClosePrice);
       out.push({
         code: s.itemCode,
         name: s.stockName,
@@ -65,7 +65,7 @@ export default async function handler(req, res) {
         market,
         marketCap: num(s.marketValue),
         price, prevClose: price - change, change,
-        changePct: num(s.fluctuationsRatio) * sign,
+        changePct: num(s.fluctuationsRatio),
         volume: num(s.accumulatedTradingVolume),
         amount: num(s.accumulatedTradingValue),
         tradedAt: s.localTradedAt || ''
@@ -81,9 +81,9 @@ export default async function handler(req, res) {
       const list = j?.result?.etfItemList || [];
       const tabName = { 1:'국내시장지수', 2:'국내업종/테마', 3:'국내파생', 4:'해외주식', 5:'원자재', 6:'채권', 7:'기타' };
       return list.map(s => {
-        const sign = (String(s.risefall) === '4' || String(s.risefall) === '5') ? -1 : 1;
+        // ETF legacy 응답: changeVal/changeRate 모두 이미 부호 포함
         const price = num(s.nowVal);
-        const change = num(s.changeVal); // 부호 이미 포함되어 있음 (음수)
+        const change = num(s.changeVal);
         return {
           code: s.itemcode,
           name: s.itemname,

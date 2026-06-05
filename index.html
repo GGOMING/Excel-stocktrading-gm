@@ -190,6 +190,28 @@
 
   /* 종목 검색 입력 */
   table.grid td.input-cell input.ticker-input{text-align:left;font-size:11px;}
+  /* 뉴스 패널 */
+  table.grid td.news-title{
+    color:#1a4d2e;font-weight:600;cursor:pointer;
+    padding:6px 10px;line-height:1.35;
+    white-space:normal;height:auto;vertical-align:top;
+    background:#f6fbf8;border-left:3px solid #217346;
+  }
+  table.grid td.news-title:hover{background:#e8f4ee;text-decoration:underline;}
+  table.grid td.news-summary{
+    color:#555;font-size:10px;font-style:italic;
+    padding:2px 10px 4px 10px;line-height:1.4;
+    white-space:normal;height:auto;vertical-align:top;
+    background:#f6fbf8;border-left:3px solid #217346;
+  }
+  table.grid td.news-meta{
+    color:#777;font-size:10px;background:#eef5f0;
+    padding:2px 8px;border-left:3px solid #217346;
+  }
+  table.grid td.news-empty{
+    color:#aaa;text-align:center;padding:20px;
+    background:#fafafa;font-style:italic;
+  }
   table.grid td.input-cell input.ticker-input::-webkit-calendar-picker-indicator{
     color:#217346;cursor:pointer;
   }
@@ -426,6 +448,7 @@ let UNIVERSE=STOCKS.slice();  // 동적 확장됨 (전체 코스피/코스닥)
 let quoteCache={};
 let orderbookCache={};
 let chartCache={};
+let newsCache={};   // {code: {articles:[], ts}}
 let marketIndex={
   KOSPI:{value:2620.45,change:0,changePct:0,prev:2620.45},
   KOSDAQ:{value:842.31,change:0,changePct:0,prev:842.31}
@@ -575,6 +598,76 @@ async function fetchOrderbookNaver(code){
     real:true,
     t:Date.now()
   };
+}
+
+async function fetchNews(code){
+  try{
+    const r=await fetch(`/api/news?code=${code}&n=3`);
+    if(!r.ok) throw new Error('news '+r.status);
+    const j=await r.json();
+    if(j.error) throw new Error(j.error);
+    newsCache[code]={articles:j.articles||[],ts:Date.now()};
+    return newsCache[code].articles;
+  }catch(e){
+    console.warn('news fail',code,e.message);
+    newsCache[code]={articles:[],ts:Date.now(),error:e.message};
+    return [];
+  }
+}
+async function ensureNews(code){
+  if(!code) return;
+  const c=newsCache[code];
+  if(c && Date.now()-c.ts<60000) return;  // 1분 캐시
+  await fetchNews(code);
+  if(['buy','sell','balance'].includes(state.currentSheet)) render();
+}
+function refreshNews(){
+  const code=state.selectedTicker;
+  if(!code) return;
+  delete newsCache[code];
+  ensureNews(code);
+}
+
+function esc(s){
+  if(s==null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function newsPanelRows(code){
+  const stock=STOCK_BY_CODE[code];
+  const cached=newsCache[code];
+  const articles=cached?.articles||[];
+  const rows=[];
+  rows.push(`<td class="header-cell" colspan="4">▣ ${stock?.name||code} 관련 뉴스</td>`);
+  rows.push(`<td class="subheader" colspan="3">${code} ${stock?.name||''} ${stock?.market?'['+stock.market+']':''}</td><td class="btn-action center" onclick="refreshNews()">↻ 갱신</td>`);
+  if(!cached){
+    rows.push(`<td class="news-empty" colspan="4">뉴스 로딩 중...</td>`);
+    return rows;
+  }
+  if(articles.length===0){
+    rows.push(`<td class="news-empty" colspan="4">${cached.error?'에러: '+esc(cached.error):'관련 뉴스가 없습니다.'}</td>`);
+    return rows;
+  }
+  articles.slice(0,3).forEach((a,i)=>{
+    const url=esc(a.url||'');
+    rows.push(`<td colspan="4" class="news-title" onclick="window.open('${url}','_blank')" title="새 창에서 열기">📰 ${esc(a.title||'')}</td>`);
+    if(a.summary){
+      rows.push(`<td colspan="4" class="news-summary">${esc(a.summary)}…</td>`);
+    }
+    rows.push(`<td class="news-meta" colspan="2">${esc(a.office||'')}</td><td class="news-meta center" colspan="2">${esc(a.datetime||'')}</td>`);
+  });
+  return rows;
+}
+
+function combineLR(leftRows,rightRows,minRows){
+  const n=Math.max(leftRows.length,rightRows.length,minRows||0);
+  let html='';
+  for(let i=0;i<n;i++){
+    const left=leftRows[i]||`<td colspan="6">&nbsp;</td>`;
+    const right=rightRows[i]||`<td colspan="4">&nbsp;</td>`;
+    html+=rowStart(i+1)+left+right+rowEnd();
+  }
+  return html;
 }
 
 async function fetchUniverse(){
@@ -1343,87 +1436,90 @@ function regenChart(){
   render();
 }
 
-/* ===== Buy ===== */
+/* ===== Buy (좌6 + 우4 뉴스) ===== */
 function renderBuy(){
   const cols=10;
   const code=state.selectedTicker;
   const q=quoteCache[code];
   const ob=orderbookCache[code];
-  let html=gridHeader(cols);
-  html+=rowStart(1)+`<td class="header-cell" colspan="${cols}">▣ 매수 주문</td>`+rowEnd();
-  html+=blankRow(2,cols);
-  html+=rowStart(3)+
+  const cls=q?(q.change>=0?'pos-pl':'neg-pl'):'';
+  const left=[];
+  left.push(`<td class="header-cell" colspan="6">▣ 매수 주문</td>`);
+  left.push(`<td colspan="6">&nbsp;</td>`);
+  left.push(
     `<td class="subheader">종목</td>`+
     `<td class="input-cell" colspan="3">${tickerInput('bTicker',code)}</td>`+
     `<td class="subheader">주문구분</td>`+
-    `<td class="input-cell"><select id="bType"><option value="MARKET">시장가</option><option value="LIMIT">지정가</option></select></td>`+
+    `<td class="input-cell"><select id="bType"><option value="MARKET">시장가</option><option value="LIMIT">지정가</option></select></td>`
+  );
+  left.push(
     `<td class="subheader">현재가</td>`+
-    `<td class="right ${q&&q.change>=0?'pos-pl':'neg-pl'}" id="bCur">${q?fmt(q.price):'-'}</td>`+
+    `<td class="right ${cls}" id="bCur">${q?fmt(q.price):'-'}</td>`+
     `<td class="subheader">등락률</td>`+
-    `<td class="right ${q&&q.change>=0?'pos-pl':'neg-pl'}">${q?fmtPct(q.changePct):'-'}</td>`+rowEnd();
-  html+=rowStart(4)+
+    `<td class="right ${cls}">${q?fmtPct(q.changePct):'-'}</td>`+
+    `<td class="subheader">전일종가</td>`+
+    `<td class="right">${q?fmt(q.prevClose):'-'}</td>`
+  );
+  left.push(
     `<td class="subheader">지정가</td>`+
     `<td class="input-cell"><input id="bPrice" type="number" value="${q?q.price:0}" step="${q?tickSize(q.price):1}"/></td>`+
     `<td class="subheader">수량</td>`+
     `<td class="input-cell"><input id="bQty" type="number" min="1" value="10"/></td>`+
-    `<td class="subheader">예상금액</td><td class="right" id="bGross">-</td>`+
-    `<td class="subheader">수수료</td><td class="right" id="bFee">-</td>`+
-    `<td class="subheader">총 차감</td><td class="right" id="bTotal">-</td>`+rowEnd();
-  html+=rowStart(5)+
+    `<td class="subheader">예상금액</td>`+
+    `<td class="right" id="bGross">-</td>`
+  );
+  left.push(
+    `<td class="subheader">수수료</td>`+
+    `<td class="right" id="bFee">-</td>`+
+    `<td class="subheader">총차감</td>`+
+    `<td class="right" id="bTotal">-</td>`+
     `<td class="subheader">예수금</td>`+
-    `<td class="right">${fmt(state.cash)}</td>`+
+    `<td class="right">${fmt(state.cash)}</td>`
+  );
+  left.push(
     `<td class="subheader">매수가능</td>`+
     `<td class="right" id="bMaxQty">-</td>`+
     `<td class="btn-action center" colspan="2" onclick="autoMaxBuy()">최대수량</td>`+
-    `<td class="btn-buy" colspan="2" onclick="onBuy()">매 수</td>`+
-    `<td class="btn-warn" colspan="2" onclick="refreshAllQuotes()">현재가 조회</td>`+rowEnd();
-  html+=blankRow(6,cols);
-
-  // mini 호가창
-  html+=rowStart(7)+`<td class="header-cell" colspan="${cols}">▣ 호가 (간략)</td>`+rowEnd();
-  html+=rowStart(8)+`<td class="subheader" colspan="2">매도잔량</td><td class="subheader" colspan="2">호가</td><td class="subheader" colspan="2">매수잔량</td>`+blank(cols,7)+rowEnd();
-  let r=9;
+    `<td class="btn-buy" colspan="2" onclick="onBuy()">매 수</td>`
+  );
+  left.push(`<td colspan="6">&nbsp;</td>`);
+  left.push(`<td class="header-cell" colspan="6">▣ 5단계 호가 ${ob?.real?'(실시간 네이버)':'(mock)'}</td>`);
+  left.push(`<td class="subheader" colspan="2">매도잔량</td><td class="subheader" colspan="2">호가</td><td class="subheader" colspan="2">매수잔량</td>`);
   if(ob){
     const N=ob.levels||ob.asks.length||5;
     for(let i=N-1;i>=0;i--){
       const a=ob.asks[i]||{price:0,qty:0};
-      html+=rowStart(r++)+`<td class="ask-row" colspan="2">${a.qty?fmt(a.qty):'-'}</td><td class="ask-price" colspan="2">${a.price?fmt(a.price):'-'}</td><td colspan="2">&nbsp;</td>`+blank(cols,7)+rowEnd();
+      left.push(`<td class="ask-row" colspan="2">${a.qty?fmt(a.qty):'-'}</td><td class="ask-price" colspan="2">${a.price?fmt(a.price):'-'}</td><td colspan="2">&nbsp;</td>`);
     }
     for(let i=0;i<N;i++){
       const b=ob.bids[i]||{price:0,qty:0};
-      html+=rowStart(r++)+`<td colspan="2">&nbsp;</td><td class="bid-price" colspan="2">${b.price?fmt(b.price):'-'}</td><td class="bid-row" colspan="2">${b.qty?fmt(b.qty):'-'}</td>`+blank(cols,7)+rowEnd();
+      left.push(`<td colspan="2">&nbsp;</td><td class="bid-price" colspan="2">${b.price?fmt(b.price):'-'}</td><td class="bid-row" colspan="2">${b.qty?fmt(b.qty):'-'}</td>`);
     }
   }else{
-    html+=rowStart(r++)+`<td class="mute center" colspan="6">(호가 정보 없음)</td>`+blank(cols,7)+rowEnd();
+    left.push(`<td class="mute center" colspan="6">(호가 정보 없음)</td>`);
   }
-  // 최근 매수
-  html+=rowStart(r++)+`<td class="header-cell" colspan="${cols}">▣ 최근 매수 내역</td>`+rowEnd();
-  html+=rowStart(r++)+
-    `<td class="subheader">일시</td><td class="subheader">종목</td><td class="subheader">구분</td>`+
-    `<td class="subheader">수량</td><td class="subheader">단가</td><td class="subheader">체결금액</td>`+
-    `<td class="subheader">수수료</td><td class="subheader">총차감</td>`+blank(cols,9)+rowEnd();
+  left.push(`<td colspan="6">&nbsp;</td>`);
+  left.push(`<td class="header-cell" colspan="6">▣ 최근 매수 내역</td>`);
+  left.push(`<td class="subheader">일시</td><td class="subheader" colspan="2">종목</td><td class="subheader">수량</td><td class="subheader">단가</td><td class="subheader">총차감</td>`);
   const buys=state.history.filter(h=>h.type==='BUY').slice(0,10);
   if(buys.length===0){
-    html+=rowStart(r++)+`<td class="mute center" colspan="${cols}">(매수 내역 없음)</td>`+rowEnd();
+    left.push(`<td class="mute center" colspan="6">(매수 내역 없음)</td>`);
   }else{
-    buys.forEach((h,i)=>{
-      html+=`<tr${i%2?' class="alt"':''}><th class="row-header">${r++}</th>`+
+    buys.forEach(h=>{
+      left.push(
         `<td class="center">${fmtTime(h.time)}</td>`+
-        `<td>${h.ticker} ${h.name}</td>`+
-        `<td class="center">${h.orderType==='LIMIT'?'지정가':'시장가'}</td>`+
+        `<td colspan="2">${h.ticker} ${h.name}</td>`+
         `<td class="right">${fmt(h.qty)}</td>`+
         `<td class="right">${fmt(h.price)}</td>`+
-        `<td class="right">${fmt(h.price*h.qty)}</td>`+
-        `<td class="right">${fmt(h.fee)}</td>`+
-        `<td class="right">${fmt(h.total)}</td>`+blank(cols,9)+rowEnd();
+        `<td class="right">${fmt(h.total)}</td>`
+      );
     });
   }
-  while(r<32){html+=blankRow(r++,cols);}
-  html+='</table>';
-  return html;
+  const right=newsPanelRows(code);
+  return gridHeader(cols)+combineLR(left,right,Math.max(left.length+2,30))+'</table>';
 }
 
-/* ===== Sell ===== */
+/* ===== Sell (좌6 + 우4 뉴스) ===== */
 function renderSell(){
   const cols=10;
   const heldCodes=Object.keys(state.positions);
@@ -1431,77 +1527,81 @@ function renderSell(){
   const q=quoteCache[code];
   const cur=state.positions[code];
   const ob=orderbookCache[code];
-  let html=gridHeader(cols);
-  html+=rowStart(1)+`<td class="header-cell" colspan="${cols}">▣ 매도 주문</td>`+rowEnd();
-  html+=blankRow(2,cols);
-  html+=rowStart(3)+
+  const cls=q?(q.change>=0?'pos-pl':'neg-pl'):'';
+  const left=[];
+  left.push(`<td class="header-cell" colspan="6">▣ 매도 주문</td>`);
+  left.push(`<td colspan="6">&nbsp;</td>`);
+  left.push(
     `<td class="subheader">종목</td>`+
     `<td class="input-cell" colspan="3">${tickerInput('sTicker',heldCodes.includes(code)?code:(heldCodes[0]||''),{held:true,placeholder:heldCodes.length?'보유종목 검색':'(보유 종목 없음)'})}</td>`+
     `<td class="subheader">주문구분</td>`+
-    `<td class="input-cell"><select id="sType"><option value="MARKET">시장가</option><option value="LIMIT">지정가</option></select></td>`+
+    `<td class="input-cell"><select id="sType"><option value="MARKET">시장가</option><option value="LIMIT">지정가</option></select></td>`
+  );
+  left.push(
     `<td class="subheader">현재가</td>`+
-    `<td class="right ${q&&q.change>=0?'pos-pl':'neg-pl'}" id="sCur">${q?fmt(q.price):'-'}</td>`+
+    `<td class="right ${cls}" id="sCur">${q?fmt(q.price):'-'}</td>`+
     `<td class="subheader">평단가</td>`+
-    `<td class="right">${cur?fmt(cur.avgPrice):'-'}</td>`+rowEnd();
-  html+=rowStart(4)+
+    `<td class="right">${cur?fmt(cur.avgPrice):'-'}</td>`+
+    `<td class="subheader">보유수량</td>`+
+    `<td class="right">${cur?fmt(cur.qty):'-'}</td>`
+  );
+  left.push(
     `<td class="subheader">지정가</td>`+
     `<td class="input-cell"><input id="sPrice" type="number" value="${q?q.price:0}" step="${q?tickSize(q.price):1}"/></td>`+
     `<td class="subheader">수량</td>`+
     `<td class="input-cell"><input id="sQty" type="number" min="1" value="${cur?Math.min(1,cur.qty):1}"/></td>`+
-    `<td class="subheader">예상금액</td><td class="right" id="sGross">-</td>`+
-    `<td class="subheader">수수료</td><td class="right" id="sFee">-</td>`+
-    `<td class="subheader">거래세</td><td class="right" id="sTax">-</td>`+rowEnd();
-  html+=rowStart(5)+
-    `<td class="subheader">실수령액</td>`+
-    `<td class="right" id="sNet">-</td>`+
+    `<td class="subheader">예상금액</td>`+
+    `<td class="right" id="sGross">-</td>`
+  );
+  left.push(
+    `<td class="subheader">수수료</td>`+
+    `<td class="right" id="sFee">-</td>`+
+    `<td class="subheader">거래세</td>`+
+    `<td class="right" id="sTax">-</td>`+
+    `<td class="subheader">실수령</td>`+
+    `<td class="right" id="sNet">-</td>`
+  );
+  left.push(
     `<td class="subheader">예상손익</td>`+
     `<td class="right" id="sPL">-</td>`+
     `<td class="btn-action center" colspan="2" onclick="autoMaxSell()">전량매도</td>`+
-    `<td class="btn-sell" colspan="2" onclick="onSell()">매 도</td>`+
-    `<td class="btn-warn" colspan="2" onclick="refreshAllQuotes()">현재가 조회</td>`+rowEnd();
-  html+=blankRow(6,cols);
-
-  // mini 호가
-  html+=rowStart(7)+`<td class="header-cell" colspan="${cols}">▣ 호가 (간략)</td>`+rowEnd();
-  html+=rowStart(8)+`<td class="subheader" colspan="2">매도잔량</td><td class="subheader" colspan="2">호가</td><td class="subheader" colspan="2">매수잔량</td>`+blank(cols,7)+rowEnd();
-  let r=9;
+    `<td class="btn-sell" colspan="2" onclick="onSell()">매 도</td>`
+  );
+  left.push(`<td colspan="6">&nbsp;</td>`);
+  left.push(`<td class="header-cell" colspan="6">▣ 5단계 호가 ${ob?.real?'(실시간 네이버)':'(mock)'}</td>`);
+  left.push(`<td class="subheader" colspan="2">매도잔량</td><td class="subheader" colspan="2">호가</td><td class="subheader" colspan="2">매수잔량</td>`);
   if(ob){
     const N=ob.levels||ob.asks.length||5;
     for(let i=N-1;i>=0;i--){
       const a=ob.asks[i]||{price:0,qty:0};
-      html+=rowStart(r++)+`<td class="ask-row" colspan="2">${a.qty?fmt(a.qty):'-'}</td><td class="ask-price" colspan="2">${a.price?fmt(a.price):'-'}</td><td colspan="2">&nbsp;</td>`+blank(cols,7)+rowEnd();
+      left.push(`<td class="ask-row" colspan="2">${a.qty?fmt(a.qty):'-'}</td><td class="ask-price" colspan="2">${a.price?fmt(a.price):'-'}</td><td colspan="2">&nbsp;</td>`);
     }
     for(let i=0;i<N;i++){
       const b=ob.bids[i]||{price:0,qty:0};
-      html+=rowStart(r++)+`<td colspan="2">&nbsp;</td><td class="bid-price" colspan="2">${b.price?fmt(b.price):'-'}</td><td class="bid-row" colspan="2">${b.qty?fmt(b.qty):'-'}</td>`+blank(cols,7)+rowEnd();
+      left.push(`<td colspan="2">&nbsp;</td><td class="bid-price" colspan="2">${b.price?fmt(b.price):'-'}</td><td class="bid-row" colspan="2">${b.qty?fmt(b.qty):'-'}</td>`);
     }
+  }else{
+    left.push(`<td class="mute center" colspan="6">(호가 정보 없음)</td>`);
   }
-  // 최근 매도
-  html+=rowStart(r++)+`<td class="header-cell" colspan="${cols}">▣ 최근 매도 내역</td>`+rowEnd();
-  html+=rowStart(r++)+
-    `<td class="subheader">일시</td><td class="subheader">종목</td><td class="subheader">구분</td>`+
-    `<td class="subheader">수량</td><td class="subheader">단가</td><td class="subheader">체결금액</td>`+
-    `<td class="subheader">수수료</td><td class="subheader">거래세</td><td class="subheader" colspan="2">실수령액</td>`+rowEnd();
+  left.push(`<td colspan="6">&nbsp;</td>`);
+  left.push(`<td class="header-cell" colspan="6">▣ 최근 매도 내역</td>`);
+  left.push(`<td class="subheader">일시</td><td class="subheader" colspan="2">종목</td><td class="subheader">수량</td><td class="subheader">단가</td><td class="subheader">실수령</td>`);
   const sells=state.history.filter(h=>h.type==='SELL').slice(0,10);
   if(sells.length===0){
-    html+=rowStart(r++)+`<td class="mute center" colspan="${cols}">(매도 내역 없음)</td>`+rowEnd();
+    left.push(`<td class="mute center" colspan="6">(매도 내역 없음)</td>`);
   }else{
-    sells.forEach((h,i)=>{
-      html+=`<tr${i%2?' class="alt"':''}><th class="row-header">${r++}</th>`+
+    sells.forEach(h=>{
+      left.push(
         `<td class="center">${fmtTime(h.time)}</td>`+
-        `<td>${h.ticker} ${h.name}</td>`+
-        `<td class="center">${h.orderType==='LIMIT'?'지정가':'시장가'}</td>`+
+        `<td colspan="2">${h.ticker} ${h.name}</td>`+
         `<td class="right">${fmt(h.qty)}</td>`+
         `<td class="right">${fmt(h.price)}</td>`+
-        `<td class="right">${fmt(h.price*h.qty)}</td>`+
-        `<td class="right">${fmt(h.fee)}</td>`+
-        `<td class="right">${fmt(h.tax)}</td>`+
-        `<td class="right" colspan="2">${fmt(h.total)}</td>`+rowEnd();
+        `<td class="right">${fmt(h.total)}</td>`
+      );
     });
   }
-  while(r<32){html+=blankRow(r++,cols);}
-  html+='</table>';
-  return html;
+  const right=newsPanelRows(code);
+  return gridHeader(cols)+combineLR(left,right,Math.max(left.length+2,30))+'</table>';
 }
 
 /* ===== Pending Orders ===== */
@@ -1576,73 +1676,92 @@ function renderExec(){
   return html;
 }
 
-/* ===== Balance (잔고 상세) ===== */
+/* ===== Balance (좌6 + 우4 뉴스) ===== */
 function renderBalance(){
   const cols=10;
   const p=calcPortfolio();
-  let html=gridHeader(cols);
-  html+=rowStart(1)+`<td class="header-cell" colspan="${cols}">▣ 계좌 잔고 상세</td>`+rowEnd();
-  html+=blankRow(2,cols);
-  html+=rowStart(3)+
-    `<td class="subheader">예수금</td><td class="right">${fmt(state.cash)}</td>`+
-    `<td class="subheader">주식평가액</td><td class="right">${fmt(p.positionValue)}</td>`+
-    `<td class="subheader">총자산</td><td class="right">${fmt(p.totalAsset)}</td>`+
-    `<td class="subheader">총평가손익</td><td class="right ${p.totalPl>=0?'pos-pl':'neg-pl'}">${fmt(p.totalPl)}</td>`+
-    `<td class="subheader">총수익률</td><td class="right ${p.totalPl>=0?'pos-pl':'neg-pl'}">${fmtPct(p.totalPlPct)}</td>`+rowEnd();
-  html+=blankRow(4,cols);
-
-  html+=rowStart(5)+`<td class="header-cell" colspan="${cols}">▣ 종목별 잔고</td>`+rowEnd();
-  html+=rowStart(6)+
-    `<td class="subheader">종목코드</td><td class="subheader">종목명</td><td class="subheader">보유수량</td>`+
-    `<td class="subheader">평단가</td><td class="subheader">현재가</td><td class="subheader">매입원가</td>`+
-    `<td class="subheader">평가금액</td><td class="subheader">평가손익</td><td class="subheader">수익률</td>`+
-    `<td class="subheader">금일손익</td>`+rowEnd();
-  let r=7;
+  const code=state.selectedTicker;
+  const left=[];
+  left.push(`<td class="header-cell" colspan="6">▣ 계좌 잔고 상세 <span style="font-weight:normal;font-size:10px;">(종목 행 클릭 → 우측에 뉴스 표시)</span></td>`);
+  left.push(`<td colspan="6">&nbsp;</td>`);
+  left.push(
+    `<td class="subheader">예수금</td>`+
+    `<td class="right">${fmt(state.cash)}</td>`+
+    `<td class="subheader">주식평가</td>`+
+    `<td class="right">${fmt(p.positionValue)}</td>`+
+    `<td class="subheader">총자산</td>`+
+    `<td class="right">${fmt(p.totalAsset)}</td>`
+  );
+  const plCls=p.totalPl>=0?'pos-pl':'neg-pl';
+  left.push(
+    `<td class="subheader">총손익</td>`+
+    `<td class="right ${plCls}">${fmt(p.totalPl)}</td>`+
+    `<td class="subheader">수익률</td>`+
+    `<td class="right ${plCls}">${fmtPct(p.totalPlPct)}</td>`+
+    `<td class="subheader">금일손익</td>`+
+    `<td class="right ${p.dayPL>=0?'pos-pl':'neg-pl'}">${fmt(p.dayPL)}</td>`
+  );
+  left.push(`<td colspan="6">&nbsp;</td>`);
+  left.push(`<td class="header-cell" colspan="6">▣ 종목별 잔고 (클릭→뉴스 갱신)</td>`);
+  left.push(
+    `<td class="subheader">종목</td>`+
+    `<td class="subheader">수량</td>`+
+    `<td class="subheader">평단</td>`+
+    `<td class="subheader">현재가</td>`+
+    `<td class="subheader">평가손익</td>`+
+    `<td class="subheader">수익률</td>`
+  );
   if(p.rows.length===0){
-    html+=rowStart(r++)+`<td class="mute center" colspan="${cols}">(보유 종목 없음)</td>`+rowEnd();
+    left.push(`<td class="mute center" colspan="6">(보유 종목 없음)</td>`);
   }else{
-    p.rows.sort((a,b)=>b.value-a.value).forEach((pos,i)=>{
+    p.rows.sort((a,b)=>b.value-a.value).forEach(pos=>{
       const cls=pos.pl>=0?'pos-pl':'neg-pl';
-      const dc=pos.dayPL>=0?'pos-pl':'neg-pl';
-      html+=`<tr${i%2?' class="alt"':''}><th class="row-header">${r++}</th>`+
-        `<td class="center">${pos.code}</td>`+
-        `<td>${pos.name}</td>`+
+      const selBg=pos.code===code?'style="background:#fff7d6;"':'';
+      left.push(
+        `<td class="center" ${selBg} onclick="selectFromBalance('${pos.code}')" style="cursor:pointer;">${pos.code} ${pos.name}</td>`+
         `<td class="right">${fmt(pos.qty)}</td>`+
         `<td class="right">${fmt(pos.avg)}</td>`+
         `<td class="right">${fmt(pos.price)}</td>`+
-        `<td class="right">${fmt(pos.cost)}</td>`+
-        `<td class="right">${fmt(pos.value)}</td>`+
         `<td class="right ${cls}">${fmt(pos.pl)}</td>`+
-        `<td class="right ${cls}">${fmtPct(pos.plPct)}</td>`+
-        `<td class="right ${dc}">${fmt(pos.dayPL)}</td>`+rowEnd();
+        `<td class="right ${cls}">${fmtPct(pos.plPct)}</td>`
+      );
     });
   }
-  html+=blankRow(r++,cols);
-
-  // 업종별 비중
-  html+=rowStart(r++)+`<td class="header-cell" colspan="${cols}">▣ 업종별 비중</td>`+rowEnd();
-  html+=rowStart(r++)+
-    `<td class="subheader">업종</td><td class="subheader">평가금액</td><td class="subheader">비중</td>`+
-    `<td class="subheader" colspan="7">분포</td>`+rowEnd();
-  const sectorMap={};
-  p.rows.forEach(x=>{const s=x.sector||'기타';sectorMap[s]=(sectorMap[s]||0)+x.value;});
-  const sectorList=Object.entries(sectorMap).sort((a,b)=>b[1]-a[1]);
-  if(sectorList.length===0){
-    html+=rowStart(r++)+`<td class="mute center" colspan="${cols}">-</td>`+rowEnd();
+  left.push(`<td colspan="6">&nbsp;</td>`);
+  left.push(`<td class="header-cell" colspan="6">▣ 시장별 비중</td>`);
+  left.push(
+    `<td class="subheader">시장</td>`+
+    `<td class="subheader">평가금액</td>`+
+    `<td class="subheader">비중</td>`+
+    `<td class="subheader" colspan="3">분포</td>`
+  );
+  const mktMap={};
+  p.rows.forEach(x=>{const s=STOCK_BY_CODE[x.code]?.market||'기타';mktMap[s]=(mktMap[s]||0)+x.value;});
+  const mktList=Object.entries(mktMap).sort((a,b)=>b[1]-a[1]);
+  if(mktList.length===0){
+    left.push(`<td class="mute center" colspan="6">-</td>`);
   }else{
-    sectorList.forEach(([s,v],i)=>{
+    mktList.forEach(([s,v])=>{
       const pct=p.positionValue?(v/p.positionValue*100):0;
-      const bar='█'.repeat(Math.round(pct/3));
-      html+=`<tr${i%2?' class="alt"':''}><th class="row-header">${r++}</th>`+
+      const bar='█'.repeat(Math.round(pct/4));
+      left.push(
         `<td>${s}</td>`+
         `<td class="right">${fmt(v)}</td>`+
         `<td class="right">${pct.toFixed(1)}%</td>`+
-        `<td colspan="7" style="color:#217346;">${bar}</td>`+rowEnd();
+        `<td colspan="3" style="color:#217346;">${bar}</td>`
+      );
     });
   }
-  while(r<32){html+=blankRow(r++,cols);}
-  html+='</table>';
-  return html;
+  const right=newsPanelRows(code);
+  return gridHeader(cols)+combineLR(left,right,Math.max(left.length+2,30))+'</table>';
+}
+
+// 잔고 시트에서 종목 클릭 → 뉴스 표시
+function selectFromBalance(code){
+  state.selectedTicker=code;
+  saveState();
+  ensureNews(code);
+  render();
 }
 
 /* ===== Watchlist ===== */
@@ -1959,7 +2078,7 @@ function attachHandlers(){
     };
     [$p,$q,$tp].forEach(el=>el&&el.addEventListener('input',upd));
     attachTickerInput('bTicker',code=>{
-      state.selectedTicker=code;saveState();render();
+      state.selectedTicker=code;saveState();render();ensureNews(code);
     });
     upd();
   }
@@ -1993,7 +2112,7 @@ function attachHandlers(){
       [$p,$q,$tp].forEach(el=>el&&el.addEventListener('input',upd));
       attachTickerInput('sTicker',code=>{
         if(!state.positions[code]) return alert('보유하지 않은 종목입니다: '+tickerLabel(code));
-        state.selectedTicker=code;saveState();render();
+        state.selectedTicker=code;saveState();render();ensureNews(code);
       });
       upd();
     }
@@ -2041,6 +2160,10 @@ function switchSheet(name){
   state.currentSheet=name;
   saveState();
   render();
+  // 뉴스 표시 시트면 자동 fetch
+  if(['buy','sell','balance'].includes(name)){
+    ensureNews(state.selectedTicker);
+  }
 }
 function setStatus(s){document.getElementById('statusLeft').textContent=s;}
 

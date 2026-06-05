@@ -24,15 +24,15 @@ export default async function handler(req, res) {
       const j = await r.json();
       const d = j?.datas?.[0];
       if (!d) return null;
-      const sign = (d.compareToPreviousPrice?.code === '5' || d.compareToPreviousPrice?.code === '4') ? -1 : 1;
+      // 네이버 raw 필드는 이미 부호 포함 (하락 시 음수). 부호 곱하면 안 됨.
       const value = num(d.closePriceRaw);
-      const change = num(d.compareToPreviousClosePriceRaw) != null ? num(d.compareToPreviousClosePriceRaw) * sign : 0;
+      const change = num(d.compareToPreviousClosePriceRaw) ?? 0;
       return {
         name,
         value,
         prevClose: value != null ? value - change : null,
         change,
-        changePct: num(d.fluctuationsRatioRaw) != null ? num(d.fluctuationsRatioRaw) * sign : 0,
+        changePct: num(d.fluctuationsRatioRaw) ?? 0,
         open: num(d.openPriceRaw),
         high: num(d.highPriceRaw),
         low: num(d.lowPriceRaw),

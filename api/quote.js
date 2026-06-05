@@ -30,11 +30,10 @@ export default async function handler(req, res) {
       return isFinite(n) ? n : null;
     };
 
+    // 네이버 raw 필드는 이미 부호 포함 (하락 종목은 음수). 부호 곱하면 안 됨.
     const price = num(d.closePriceRaw);
-    const prevCloseChange = num(d.compareToPreviousClosePriceRaw);
-    const sign = (d.compareToPreviousPrice?.code === '5' || d.compareToPreviousPrice?.code === '4') ? -1 : 1;
-    const change = prevCloseChange != null ? prevCloseChange * sign : 0;
-    const prevClose = price != null && change != null ? price - change : null;
+    const change = num(d.compareToPreviousClosePriceRaw) ?? 0;
+    const prevClose = price != null ? price - change : null;
 
     const out = {
       code,
@@ -43,7 +42,7 @@ export default async function handler(req, res) {
       price,
       prevClose,
       change,
-      changePct: num(d.fluctuationsRatioRaw) != null ? num(d.fluctuationsRatioRaw) * sign : (num(d.fluctuationsRatio) || 0) * sign,
+      changePct: num(d.fluctuationsRatioRaw) ?? 0,
       open: num(d.openPriceRaw),
       high: num(d.highPriceRaw),
       low: num(d.lowPriceRaw),
