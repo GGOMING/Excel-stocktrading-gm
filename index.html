@@ -214,13 +214,15 @@
   }
   /* 미니 차트 */
   table.grid td.mini-chart-cell{
-    padding:0;vertical-align:top;background:#fff;
+    padding:6px 8px;vertical-align:top;background:#fff;
     cursor:ns-resize;border-left:2px solid #217346;
+    min-width:560px;
   }
-  table.grid td.mini-chart-cell svg{display:block;width:100%;height:100%;}
+  table.grid td.mini-chart-cell svg{display:block;}
   .mini-chart-hint{
-    text-align:center;font-size:10px;color:#888;
-    padding:4px;background:#f6fbf8;border-top:1px dashed #ccc;
+    text-align:center;font-size:11px;color:#666;
+    padding:6px;background:#f6fbf8;border-top:1px dashed #ccc;
+    margin-top:4px;
   }
   table.grid td.input-cell input.ticker-input::-webkit-calendar-picker-indicator{
     color:#217346;cursor:pointer;
@@ -1469,9 +1471,10 @@ function miniChartSVG(code){
   const period=state.chartPeriod||60;
   const data=all.slice(-period);
   if(!data.length){
-    return '<div style="padding:80px 20px;text-align:center;color:#999;font-size:11px;">차트 로딩 중...</div>';
+    return '<div style="padding:200px 40px;text-align:center;color:#999;font-size:13px;">차트 로딩 중...</div>';
   }
-  const W=440, priceH=240, volH=60, padTop=18, padL=8, padR=44, gap=8, xPad=20;
+  // 크게 확대된 사이즈
+  const W=720, priceH=560, volH=160, padTop=32, padL=14, padR=68, gap=14, xPad=32;
   const H=padTop+priceH+gap+volH+xPad;
   const n=data.length;
   const innerW=W-padL-padR;
@@ -1482,61 +1485,71 @@ function miniChartSVG(code){
   const py=p=>padTop+(maxP-p)/(maxP-minP)*priceH;
   const vyTop=priceH+padTop+gap;
   const vy=v=>vyTop+volH-(v/maxV)*volH;
-  // 이동평균
   const ma=(arr,k)=>arr.map((_,i)=>{
     if(i<k-1) return null;
     let s=0;for(let j=0;j<k;j++) s+=arr[i-j].close;
     return s/k;
   });
-  const ma5=ma(data,5),ma20=ma(data,20);
-  let svg=`<svg class="chart mini-chart" width="100%" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
-  // 격자
-  for(let i=0;i<=3;i++){
-    const y=padTop+priceH*i/3;
-    const p=maxP-(maxP-minP)*i/3;
+  const ma5=ma(data,5),ma20=ma(data,20),ma60=ma(data,60);
+  let svg=`<svg class="chart mini-chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="max-width:100%;height:auto;display:block;">`;
+  // 격자 5개 라인
+  for(let i=0;i<=5;i++){
+    const y=padTop+priceH*i/5;
+    const p=maxP-(maxP-minP)*i/5;
     svg+=`<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#eee" stroke-width="1"/>`;
-    svg+=`<text x="${W-padR+2}" y="${y+3}" font-size="9" fill="#666">${fmt(p)}</text>`;
+    svg+=`<text x="${W-padR+4}" y="${y+4}" font-size="12" fill="#555">${fmt(p)}</text>`;
   }
   // 거래량 격자
   svg+=`<line x1="${padL}" y1="${vyTop+volH}" x2="${W-padR}" y2="${vyTop+volH}" stroke="#ccc" stroke-width="1"/>`;
+  svg+=`<text x="${W-padR+4}" y="${vyTop+12}" font-size="10" fill="#999">거래량</text>`;
   // 캔들
   data.forEach((d,i)=>{
-    const x=padL+cw*i+cw*0.15;
-    const w=Math.max(1,cw*0.7);
+    const x=padL+cw*i+cw*0.12;
+    const w=Math.max(1,cw*0.76);
     const up=d.close>=d.open;
     const fill=up?'#c53030':'#fff';
     const stroke=up?'#c53030':'#2b6cb0';
     const yH=py(d.high),yL=py(d.low);
     const yO=py(d.open),yC=py(d.close);
     const bodyY=Math.min(yO,yC);
-    const bodyH=Math.max(1,Math.abs(yC-yO));
-    svg+=`<line x1="${x+w/2}" y1="${yH}" x2="${x+w/2}" y2="${yL}" stroke="${stroke}" stroke-width="1"/>`;
-    svg+=`<rect x="${x}" y="${bodyY}" width="${w}" height="${bodyH}" fill="${fill}" stroke="${stroke}" stroke-width="1"/>`;
-    // 거래량
+    const bodyH=Math.max(1.5,Math.abs(yC-yO));
+    svg+=`<line x1="${x+w/2}" y1="${yH}" x2="${x+w/2}" y2="${yL}" stroke="${stroke}" stroke-width="1.5"/>`;
+    svg+=`<rect x="${x}" y="${bodyY}" width="${w}" height="${bodyH}" fill="${fill}" stroke="${stroke}" stroke-width="1.2"/>`;
     const vyT=vy(d.volume||0);
     svg+=`<rect x="${x}" y="${vyT}" width="${w}" height="${vyTop+volH-vyT}" fill="${up?'#f5a3a3':'#a3c1e0'}"/>`;
   });
   // 이동평균선
-  const polyline=(arr,color)=>{
+  const polyline=(arr,color,sw)=>{
     let pts='';
     arr.forEach((v,i)=>{if(v!=null) pts+=`${padL+cw*i+cw*0.5},${py(v)} `;});
-    return `<polyline points="${pts}" stroke="${color}" stroke-width="1" fill="none"/>`;
+    return `<polyline points="${pts}" stroke="${color}" stroke-width="${sw||1.5}" fill="none"/>`;
   };
-  svg+=polyline(ma5,'#dd8800');
-  svg+=polyline(ma20,'#2b8c4a');
-  // X축 라벨 (시작/중간/끝)
+  svg+=polyline(ma5,'#dd8800',1.5);
+  svg+=polyline(ma20,'#2b8c4a',1.5);
+  if(period>=60) svg+=polyline(ma60,'#7a3eb1',1.5);
+  // X축 라벨 (시작/1/4/중간/3/4/끝)
   if(n>0){
-    svg+=`<text x="${padL+2}" y="${H-4}" font-size="9" fill="#666">${data[0].date?.slice(2)||''}</text>`;
-    if(n>5) svg+=`<text x="${padL+innerW/2-20}" y="${H-4}" font-size="9" fill="#666">${data[Math.floor(n/2)].date?.slice(2)||''}</text>`;
-    svg+=`<text x="${W-padR-40}" y="${H-4}" font-size="9" fill="#666">${data[n-1].date?.slice(2)||''}</text>`;
+    const xPositions=[0,Math.floor(n/4),Math.floor(n/2),Math.floor(3*n/4),n-1];
+    xPositions.forEach(idx=>{
+      if(idx>=0&&idx<n){
+        const x=padL+cw*idx+cw*0.5;
+        svg+=`<text x="${x-22}" y="${H-8}" font-size="11" fill="#555">${data[idx].date?.slice(2)||''}</text>`;
+      }
+    });
   }
-  // 헤더 (현재가, 등락률)
+  // 헤더 (현재가 + 기간수익률 + MA 범례)
   const last=data[n-1];
   const first=data[0];
   if(last&&first){
     const totalChg=((last.close-first.close)/first.close)*100;
     const c=totalChg>=0?'#c53030':'#2b6cb0';
-    svg+=`<text x="${padL+2}" y="12" font-size="10" fill="${c}" font-weight="600">기간수익률 ${totalChg>=0?'+':''}${totalChg.toFixed(2)}%</text>`;
+    svg+=`<text x="${padL+2}" y="20" font-size="14" fill="${c}" font-weight="700">${fmt(last.close)} (기간 ${totalChg>=0?'+':''}${totalChg.toFixed(2)}%)</text>`;
+    // 범례
+    svg+=`<g font-size="11">`;
+    svg+=`<text x="${W-padR-180}" y="20" fill="#dd8800" font-weight="600">━ MA5</text>`;
+    svg+=`<text x="${W-padR-120}" y="20" fill="#2b8c4a" font-weight="600">━ MA20</text>`;
+    if(period>=60) svg+=`<text x="${W-padR-60}" y="20" fill="#7a3eb1" font-weight="600">━ MA60</text>`;
+    svg+=`</g>`;
   }
   svg+=`</svg>`;
   return svg;
@@ -1599,7 +1612,7 @@ function buildSheetWithChartAndNews(left,code){
   const leftRow1=left[0]||`<td colspan="6">&nbsp;</td>`;
   html+=rowStart(1)+leftRow1+`<td class="header-cell" colspan="4">▣ ${stock?.name||code} 차트 [${chartPeriodLabel(state.chartPeriod)}]</td>`+rowEnd();
   // 차트 셀: row 2부터 rowspan으로 차트가 차지
-  const chartRows=Math.max(left.length-1,20);
+  const chartRows=Math.max(left.length-1,36);
   const leftRow2=left[1]||`<td colspan="6">&nbsp;</td>`;
   html+=rowStart(2)+leftRow2+`<td colspan="4" rowspan="${chartRows}" class="mini-chart-cell" onwheel="onChartWheel(event)">${miniChartSVG(code)}<div class="mini-chart-hint">휠↓ 기간 확대 (${chartPeriodLabel(state.chartPeriod)}) 휠↑ 축소</div></td>`+rowEnd();
   // 나머지 left 행들
