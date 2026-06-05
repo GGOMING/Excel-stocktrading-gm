@@ -212,6 +212,16 @@
     color:#aaa;text-align:center;padding:20px;
     background:#fafafa;font-style:italic;
   }
+  /* 미니 차트 */
+  table.grid td.mini-chart-cell{
+    padding:0;vertical-align:top;background:#fff;
+    cursor:ns-resize;border-left:2px solid #217346;
+  }
+  table.grid td.mini-chart-cell svg{display:block;width:100%;height:100%;}
+  .mini-chart-hint{
+    text-align:center;font-size:10px;color:#888;
+    padding:4px;background:#f6fbf8;border-top:1px dashed #ccc;
+  }
   table.grid td.input-cell input.ticker-input::-webkit-calendar-picker-indicator{
     color:#217346;cursor:pointer;
   }
@@ -382,8 +392,19 @@ const DEFAULT_STATE={
   },
   currentSheet:'dashboard',
   lastQuoteFetch:0,
-  autoRefresh:false
+  autoRefresh:false,
+  chartPeriod:60
 };
+const CHART_PERIODS=[5,10,20,60,120,240,720];
+function chartPeriodLabel(d){
+  if(d<=5) return '1주';
+  if(d<=10) return '2주';
+  if(d<=20) return '1개월';
+  if(d<=60) return '3개월';
+  if(d<=120) return '6개월';
+  if(d<=240) return '1년';
+  return '3년';
+}
 
 let state=loadState();
 let autoTimer=null;
@@ -1221,95 +1242,83 @@ function renderDashboard(){
 
 /* ===== Quote Detail + Order Book ===== */
 function renderQuoteDetail(){
-  const cols=10;
   const code=state.selectedTicker;
   const stock=STOCK_BY_CODE[code]||{};
   const q=quoteCache[code];
   const ob=orderbookCache[code];
   const cls=q?(q.change>=0?'pos-pl':'neg-pl'):'';
-  let html=gridHeader(cols);
-  html+=rowStart(1)+`<td class="header-cell" colspan="${cols}">▣ 종목 현재가 / 호가</td>`+rowEnd();
-  html+=blankRow(2,cols);
-  html+=rowStart(3)+
-    `<td class="subheader">종목선택</td>`+
+  const left=[];
+  left.push(`<td class="header-cell" colspan="6">▣ 종목 현재가 / 호가</td>`);
+  left.push(
+    `<td class="subheader">종목</td>`+
     `<td class="input-cell" colspan="3">${tickerInput('qTicker',code)}</td>`+
-    `<td class="subheader">시장</td><td class="center">${stock.mcap||'-'}</td>`+
-    `<td class="subheader">업종</td><td class="center">${stock.sector||'-'}</td>`+
-    `<td class="btn-action" onclick="refreshAllQuotes()">새로고침</td>`+blank(cols,10)+rowEnd();
-  html+=blankRow(4,cols);
-  // big price display
-  html+=rowStart(5)+
+    `<td class="subheader">시장</td><td class="center">${stock.market||stock.mcap||'-'}</td>`
+  );
+  left.push(
     `<td class="subheader">현재가</td>`+
     `<td class="big-num ${cls}" colspan="2">${q?fmt(q.price):'-'}</td>`+
     `<td class="subheader">전일대비</td>`+
-    `<td class="right ${cls}">${q?(q.change>=0?'+':'')+fmt(q.change):'-'}</td>`+
+    `<td class="right ${cls}" colspan="2">${q?(q.change>=0?'+':'')+fmt(q.change):'-'}</td>`
+  );
+  left.push(
     `<td class="subheader">등락률</td>`+
     `<td class="right ${cls}">${q?fmtPct(q.changePct):'-'}</td>`+
+    `<td class="subheader">전일종가</td>`+
+    `<td class="right">${q?fmt(q.prevClose):'-'}</td>`+
     `<td class="subheader">거래량</td>`+
-    `<td class="right">${q?fmt(q.volume):'-'}</td>`+rowEnd();
-  html+=rowStart(6)+
+    `<td class="right">${q?fmt(q.volume):'-'}</td>`
+  );
+  left.push(
     `<td class="subheader">시가</td><td class="right">${q?fmt(q.open):'-'}</td>`+
     `<td class="subheader">고가</td><td class="right pos-pl">${q?fmt(q.high):'-'}</td>`+
-    `<td class="subheader">저가</td><td class="right neg-pl">${q?fmt(q.low):'-'}</td>`+
+    `<td class="subheader">저가</td><td class="right neg-pl">${q?fmt(q.low):'-'}</td>`
+  );
+  left.push(
     `<td class="subheader">상한가</td><td class="right pos-pl">${q?fmt(q.upper):'-'}</td>`+
-    `<td class="subheader">하한가</td><td class="right neg-pl">${q?fmt(q.lower):'-'}</td>`+rowEnd();
-  html+=rowStart(7)+
-    `<td class="subheader">전일종가</td><td class="right">${q?fmt(q.prevClose):'-'}</td>`+
-    `<td class="subheader">거래대금</td><td class="right">${q?fmt(q.amount):'-'}</td>`+
-    `<td class="subheader">외국인순매수</td><td class="right ${q&&q.foreign>=0?'pos-pl':'neg-pl'}">${q?fmt(q.foreign):'-'}</td>`+
-    `<td class="subheader">기관순매수</td><td class="right ${q&&q.inst>=0?'pos-pl':'neg-pl'}">${q?fmt(q.inst):'-'}</td>`+
-    `<td class="subheader">호가단위</td><td class="right">${q?fmt(tickSize(q.price)):'-'}</td>`+rowEnd();
-  html+=blankRow(8,cols);
-
-  // 호가창 (네이버 5단계)
-  html+=rowStart(9)+`<td class="header-cell" colspan="${cols}">▣ 5단계 호가 ${ob?.real?'(실시간 네이버)':'(mock)'}</td>`+rowEnd();
-  html+=rowStart(10)+
+    `<td class="subheader">하한가</td><td class="right neg-pl">${q?fmt(q.lower):'-'}</td>`+
+    `<td class="subheader">거래대금</td><td class="right">${q?fmt(q.amount):'-'}</td>`
+  );
+  left.push(`<td colspan="6">&nbsp;</td>`);
+  left.push(`<td class="header-cell" colspan="6">▣ 5단계 호가 ${ob?.real?'(실시간 네이버)':'(mock)'}</td>`);
+  left.push(
     `<td class="subheader" colspan="2">매도잔량</td>`+
-    `<td class="subheader" colspan="2">매도호가</td>`+
-    `<td class="subheader" colspan="2">매수호가</td>`+
-    `<td class="subheader" colspan="2">매수잔량</td>`+
-    `<td class="subheader" colspan="2">비고</td>`+rowEnd();
-  let r=11;
+    `<td class="subheader" colspan="2">호가</td>`+
+    `<td class="subheader" colspan="2">매수잔량</td>`
+  );
   if(!ob){
-    html+=rowStart(r++)+`<td class="center mute" colspan="${cols}">(호가 정보 없음 — 새로고침)</td>`+rowEnd();
+    left.push(`<td class="center mute" colspan="6">(호가 정보 없음 — 새로고침)</td>`);
   }else{
     const N=ob.levels||ob.asks.length||5;
-    // 매도호가 N→1 (위에서 아래로 가까워짐)
     for(let i=N-1;i>=0;i--){
       const a=ob.asks[i]||{price:0,qty:0};
-      html+=rowStart(r++)+
+      left.push(
         `<td class="ask-row" colspan="2">${a.qty?fmt(a.qty):'-'}</td>`+
         `<td class="ask-price" colspan="2">${a.price?fmt(a.price):'-'}</td>`+
-        `<td colspan="2">&nbsp;</td><td colspan="2">&nbsp;</td>`+
-        `<td colspan="2" class="mute center">매도${i+1}</td>`+rowEnd();
+        `<td colspan="2">&nbsp;</td>`
+      );
     }
-    // 현재가 행
-    html+=rowStart(r++)+
-      `<td colspan="4">&nbsp;</td>`+
-      `<td class="cur-price-row ${q&&q.change>=0?'up':'down'}" colspan="2">${q?fmt(q.price):'-'} (${q?fmtPct(q.changePct):'-'})</td>`+
+    left.push(
       `<td colspan="2">&nbsp;</td>`+
-      `<td colspan="2" class="center subheader">현재가</td>`+rowEnd();
-    // 매수호가 1→N
+      `<td class="cur-price-row ${q&&q.change>=0?'up':'down'}" colspan="2">${q?fmt(q.price):'-'} (${q?fmtPct(q.changePct):'-'})</td>`+
+      `<td colspan="2">&nbsp;</td>`
+    );
     for(let i=0;i<N;i++){
       const b=ob.bids[i]||{price:0,qty:0};
-      html+=rowStart(r++)+
-        `<td colspan="2">&nbsp;</td><td colspan="2">&nbsp;</td>`+
+      left.push(
+        `<td colspan="2">&nbsp;</td>`+
         `<td class="bid-price" colspan="2">${b.price?fmt(b.price):'-'}</td>`+
-        `<td class="bid-row" colspan="2">${b.qty?fmt(b.qty):'-'}</td>`+
-        `<td colspan="2" class="mute center">매수${i+1}</td>`+rowEnd();
+        `<td class="bid-row" colspan="2">${b.qty?fmt(b.qty):'-'}</td>`
+      );
     }
-    // 합계 표시
     if(ob.totalAsk||ob.totalBid){
-      html+=rowStart(r++)+
+      left.push(
         `<td class="ask-row" colspan="2">${fmt(ob.totalAsk||0)}</td>`+
         `<td class="subheader" colspan="2">총잔량</td>`+
-        `<td class="subheader" colspan="2">총잔량</td>`+
-        `<td class="bid-row" colspan="2">${fmt(ob.totalBid||0)}</td>`+
-        `<td colspan="2" class="mute center">매도/매수 합</td>`+rowEnd();
+        `<td class="bid-row" colspan="2">${fmt(ob.totalBid||0)}</td>`
+      );
     }
   }
-  html+='</table>';
-  return html;
+  return buildSheetWithChartAndNews(left,code);
 }
 
 /* ===== Chart (SVG candlestick) ===== */
@@ -1432,8 +1441,183 @@ function chartSVG(data){
 
 function regenChart(){
   delete chartCache[state.selectedTicker];
-  generateChartData(state.selectedTicker);
+  ensureChartData(state.selectedTicker).then(()=>render());
+}
+
+/* ===== 차트 실데이터 로딩 (Naver 일봉) ===== */
+async function ensureChartData(code){
+  if(!code) return [];
+  try{
+    const r=await fetch(`/api/chart?code=${code}&days=720`);
+    if(!r.ok) throw new Error('chart '+r.status);
+    const j=await r.json();
+    if(j.error) throw new Error(j.error);
+    chartCache[code]=(j.data||[]).map(d=>({...d,
+      open:d.open,high:d.high,low:d.low,close:d.close,volume:d.volume
+    }));
+    return chartCache[code];
+  }catch(e){
+    console.warn('chart fail',code,e.message);
+    if(!chartCache[code]) generateChartData(code);
+    return chartCache[code]||[];
+  }
+}
+
+/* ===== 미니 차트 (매수/매도/호가 시트 우측) ===== */
+function miniChartSVG(code){
+  const all=chartCache[code]||[];
+  const period=state.chartPeriod||60;
+  const data=all.slice(-period);
+  if(!data.length){
+    return '<div style="padding:80px 20px;text-align:center;color:#999;font-size:11px;">차트 로딩 중...</div>';
+  }
+  const W=440, priceH=240, volH=60, padTop=18, padL=8, padR=44, gap=8, xPad=20;
+  const H=padTop+priceH+gap+volH+xPad;
+  const n=data.length;
+  const innerW=W-padL-padR;
+  const cw=innerW/n;
+  const maxP=Math.max(...data.map(d=>d.high||0))*1.005;
+  const minP=Math.min(...data.map(d=>d.low||Infinity))*0.995;
+  const maxV=Math.max(...data.map(d=>d.volume||0))||1;
+  const py=p=>padTop+(maxP-p)/(maxP-minP)*priceH;
+  const vyTop=priceH+padTop+gap;
+  const vy=v=>vyTop+volH-(v/maxV)*volH;
+  // 이동평균
+  const ma=(arr,k)=>arr.map((_,i)=>{
+    if(i<k-1) return null;
+    let s=0;for(let j=0;j<k;j++) s+=arr[i-j].close;
+    return s/k;
+  });
+  const ma5=ma(data,5),ma20=ma(data,20);
+  let svg=`<svg class="chart mini-chart" width="100%" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+  // 격자
+  for(let i=0;i<=3;i++){
+    const y=padTop+priceH*i/3;
+    const p=maxP-(maxP-minP)*i/3;
+    svg+=`<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#eee" stroke-width="1"/>`;
+    svg+=`<text x="${W-padR+2}" y="${y+3}" font-size="9" fill="#666">${fmt(p)}</text>`;
+  }
+  // 거래량 격자
+  svg+=`<line x1="${padL}" y1="${vyTop+volH}" x2="${W-padR}" y2="${vyTop+volH}" stroke="#ccc" stroke-width="1"/>`;
+  // 캔들
+  data.forEach((d,i)=>{
+    const x=padL+cw*i+cw*0.15;
+    const w=Math.max(1,cw*0.7);
+    const up=d.close>=d.open;
+    const fill=up?'#c53030':'#fff';
+    const stroke=up?'#c53030':'#2b6cb0';
+    const yH=py(d.high),yL=py(d.low);
+    const yO=py(d.open),yC=py(d.close);
+    const bodyY=Math.min(yO,yC);
+    const bodyH=Math.max(1,Math.abs(yC-yO));
+    svg+=`<line x1="${x+w/2}" y1="${yH}" x2="${x+w/2}" y2="${yL}" stroke="${stroke}" stroke-width="1"/>`;
+    svg+=`<rect x="${x}" y="${bodyY}" width="${w}" height="${bodyH}" fill="${fill}" stroke="${stroke}" stroke-width="1"/>`;
+    // 거래량
+    const vyT=vy(d.volume||0);
+    svg+=`<rect x="${x}" y="${vyT}" width="${w}" height="${vyTop+volH-vyT}" fill="${up?'#f5a3a3':'#a3c1e0'}"/>`;
+  });
+  // 이동평균선
+  const polyline=(arr,color)=>{
+    let pts='';
+    arr.forEach((v,i)=>{if(v!=null) pts+=`${padL+cw*i+cw*0.5},${py(v)} `;});
+    return `<polyline points="${pts}" stroke="${color}" stroke-width="1" fill="none"/>`;
+  };
+  svg+=polyline(ma5,'#dd8800');
+  svg+=polyline(ma20,'#2b8c4a');
+  // X축 라벨 (시작/중간/끝)
+  if(n>0){
+    svg+=`<text x="${padL+2}" y="${H-4}" font-size="9" fill="#666">${data[0].date?.slice(2)||''}</text>`;
+    if(n>5) svg+=`<text x="${padL+innerW/2-20}" y="${H-4}" font-size="9" fill="#666">${data[Math.floor(n/2)].date?.slice(2)||''}</text>`;
+    svg+=`<text x="${W-padR-40}" y="${H-4}" font-size="9" fill="#666">${data[n-1].date?.slice(2)||''}</text>`;
+  }
+  // 헤더 (현재가, 등락률)
+  const last=data[n-1];
+  const first=data[0];
+  if(last&&first){
+    const totalChg=((last.close-first.close)/first.close)*100;
+    const c=totalChg>=0?'#c53030':'#2b6cb0';
+    svg+=`<text x="${padL+2}" y="12" font-size="10" fill="${c}" font-weight="600">기간수익률 ${totalChg>=0?'+':''}${totalChg.toFixed(2)}%</text>`;
+  }
+  svg+=`</svg>`;
+  return svg;
+}
+
+/* ===== 휠 줌 ===== */
+let lastWheelTime=0;
+function onChartWheel(e){
+  e.preventDefault();
+  e.stopPropagation();
+  const now=Date.now();
+  if(now-lastWheelTime<120) return;
+  lastWheelTime=now;
+  const idx=CHART_PERIODS.indexOf(state.chartPeriod);
+  let newIdx=idx;
+  if(e.deltaY>0){newIdx=Math.min(CHART_PERIODS.length-1,idx+1);}  // 휠↓ → 더 긴 기간
+  else if(e.deltaY<0){newIdx=Math.max(0,idx-1);}                   // 휠↑ → 더 짧은 기간
+  if(newIdx===idx) return;
+  state.chartPeriod=CHART_PERIODS[newIdx];
+  saveState();
+  setStatus(`차트 기간: ${chartPeriodLabel(state.chartPeriod)} (${state.chartPeriod}거래일)`);
   render();
+}
+
+/* ===== 풀폭 뉴스 (시트 하단) ===== */
+function newsBottomRows(code){
+  const stock=STOCK_BY_CODE[code];
+  const cached=newsCache[code];
+  const articles=cached?.articles||[];
+  const rows=[];
+  rows.push(`<td class="header-cell" colspan="10">▣ ${stock?.name||code} 관련 뉴스 ${cached?.ts?'('+fmtTime(cached.ts)+' 갱신)':''} <span style="font-weight:normal;font-size:10px;cursor:pointer;" onclick="refreshNews()">↻</span></td>`);
+  if(!cached){
+    rows.push(`<td class="news-empty" colspan="10">뉴스 로딩 중...</td>`);
+    return rows;
+  }
+  if(articles.length===0){
+    rows.push(`<td class="news-empty" colspan="10">${cached.error?'에러: '+esc(cached.error):'관련 뉴스가 없습니다.'}</td>`);
+    return rows;
+  }
+  articles.slice(0,3).forEach(a=>{
+    const url=esc(a.url||'');
+    rows.push(
+      `<td class="news-title" colspan="7" onclick="window.open('${url}','_blank')">📰 ${esc(a.title||'')}</td>`+
+      `<td class="news-meta" colspan="2">${esc(a.office||'')}</td>`+
+      `<td class="news-meta center">${esc(a.datetime||'')}</td>`
+    );
+    if(a.summary){
+      rows.push(`<td class="news-summary" colspan="10">${esc(a.summary)}…</td>`);
+    }
+  });
+  return rows;
+}
+
+/* ===== 좌+우(rowspan 차트) + 하단(뉴스) 빌더 ===== */
+function buildSheetWithChartAndNews(left,code){
+  const cols=10;
+  const stock=STOCK_BY_CODE[code];
+  let html=gridHeader(cols);
+  // 차트 헤더는 row 1
+  const leftRow1=left[0]||`<td colspan="6">&nbsp;</td>`;
+  html+=rowStart(1)+leftRow1+`<td class="header-cell" colspan="4">▣ ${stock?.name||code} 차트 [${chartPeriodLabel(state.chartPeriod)}]</td>`+rowEnd();
+  // 차트 셀: row 2부터 rowspan으로 차트가 차지
+  const chartRows=Math.max(left.length-1,20);
+  const leftRow2=left[1]||`<td colspan="6">&nbsp;</td>`;
+  html+=rowStart(2)+leftRow2+`<td colspan="4" rowspan="${chartRows}" class="mini-chart-cell" onwheel="onChartWheel(event)">${miniChartSVG(code)}<div class="mini-chart-hint">휠↓ 기간 확대 (${chartPeriodLabel(state.chartPeriod)}) 휠↑ 축소</div></td>`+rowEnd();
+  // 나머지 left 행들
+  for(let i=2;i<left.length;i++){
+    html+=rowStart(i+1)+left[i]+rowEnd();
+  }
+  // left 부족하면 빈 행 추가
+  for(let i=left.length;i<1+chartRows;i++){
+    html+=rowStart(i+1)+`<td colspan="6">&nbsp;</td>`+rowEnd();
+  }
+  // 뉴스 (전폭 10cols)
+  const news=newsBottomRows(code);
+  const startRow=1+chartRows+1;
+  news.forEach((nr,i)=>{
+    html+=rowStart(startRow+i)+nr+rowEnd();
+  });
+  html+='</table>';
+  return html;
 }
 
 /* ===== Buy (좌6 + 우4 뉴스) ===== */
@@ -1515,11 +1699,10 @@ function renderBuy(){
       );
     });
   }
-  const right=newsPanelRows(code);
-  return gridHeader(cols)+combineLR(left,right,Math.max(left.length+2,30))+'</table>';
+  return buildSheetWithChartAndNews(left,code);
 }
 
-/* ===== Sell (좌6 + 우4 뉴스) ===== */
+/* ===== Sell (좌6 위젯 + 우4 차트 + 하단 뉴스) ===== */
 function renderSell(){
   const cols=10;
   const heldCodes=Object.keys(state.positions);
@@ -1600,8 +1783,7 @@ function renderSell(){
       );
     });
   }
-  const right=newsPanelRows(code);
-  return gridHeader(cols)+combineLR(left,right,Math.max(left.length+2,30))+'</table>';
+  return buildSheetWithChartAndNews(left,code);
 }
 
 /* ===== Pending Orders ===== */
@@ -2045,13 +2227,18 @@ function applyConfigInline(){
    ================================================================= */
 function attachHandlers(){
   if(state.currentSheet==='quote'){
-    attachTickerInput('qTicker',code=>{
-      state.selectedTicker=code;saveState();refreshAllQuotes();
+    attachTickerInput('qTicker',async code=>{
+      state.selectedTicker=code;saveState();
+      ensureNews(code);
+      refreshAllQuotes();
+      ensureChartData(code).then(()=>render());
     });
   }
   if(state.currentSheet==='chart'){
-    attachTickerInput('cTicker',code=>{
-      state.selectedTicker=code;delete chartCache[code];saveState();refreshAllQuotes();
+    attachTickerInput('cTicker',async code=>{
+      state.selectedTicker=code;delete chartCache[code];saveState();
+      refreshAllQuotes();
+      ensureChartData(code).then(()=>render());
     });
   }
   if(state.currentSheet==='buy'){
@@ -2080,7 +2267,7 @@ function attachHandlers(){
     attachTickerInput('bTicker',async code=>{
       state.selectedTicker=code;saveState();render();
       ensureNews(code);
-      // 새 종목 시세/호가 자동 로드 (캐시 없으면)
+      ensureChartData(code).then(()=>render());
       setStatus(`${tickerLabel(code)} 시세/호가 로드 중...`);
       await fetchQuote(code);
       setStatus('준비');
@@ -2120,6 +2307,7 @@ function attachHandlers(){
         if(!state.positions[code]) return alert('보유하지 않은 종목입니다: '+tickerLabel(code));
         state.selectedTicker=code;saveState();render();
         ensureNews(code);
+        ensureChartData(code).then(()=>render());
         setStatus(`${tickerLabel(code)} 시세/호가 로드 중...`);
         await fetchQuote(code);
         setStatus('준비');
@@ -2171,13 +2359,16 @@ function switchSheet(name){
   state.currentSheet=name;
   saveState();
   render();
+  const code=state.selectedTicker;
   if(['buy','sell','balance','quote','chart'].includes(name)){
-    ensureNews(state.selectedTicker);
-    // 선택종목 시세/호가가 캐시에 없으면 자동 로드 (ETF 등 비주류 종목 대응)
-    const code=state.selectedTicker;
+    ensureNews(code);
     if(code && !quoteCache[code]){
       fetchQuote(code).then(()=>render()).catch(()=>{});
     }
+  }
+  // 차트가 들어가는 시트는 실데이터 차트 자동 로드
+  if(['buy','sell','quote','chart'].includes(name) && code){
+    ensureChartData(code).then(()=>render()).catch(()=>{});
   }
 }
 function setStatus(s){document.getElementById('statusLeft').textContent=s;}
