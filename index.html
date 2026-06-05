@@ -629,7 +629,12 @@ async function fetchNews(code){
     if(!r.ok) throw new Error('news '+r.status);
     const j=await r.json();
     if(j.error) throw new Error(j.error);
-    newsCache[code]={articles:j.articles||[],ts:Date.now()};
+    newsCache[code]={
+      articles:j.articles||[],
+      mode:j.mode||'direct',
+      representatives:j.representatives||null,
+      ts:Date.now()
+    };
     return newsCache[code].articles;
   }catch(e){
     console.warn('news fail',code,e.message);
@@ -662,7 +667,13 @@ function newsPanelRows(code){
   const articles=cached?.articles||[];
   const rows=[];
   rows.push(`<td class="header-cell" colspan="4">▣ ${stock?.name||code} 관련 뉴스</td>`);
-  rows.push(`<td class="subheader" colspan="3">${code} ${stock?.name||''} ${stock?.market?'['+stock.market+']':''}</td><td class="btn-action center" onclick="refreshNews()">↻ 갱신</td>`);
+  // 출처 안내: ETF는 편입종목 뉴스 표시
+  if(cached?.mode==='etf_constituents'&&cached.representatives){
+    const repNames=cached.representatives.map(c=>STOCK_BY_CODE[c]?.name||c).join(', ');
+    rows.push(`<td class="news-meta" colspan="3" style="font-size:10px;">⚠ ETF 편입종목 뉴스: ${esc(repNames)}</td><td class="btn-action center" onclick="refreshNews()">↻</td>`);
+  }else{
+    rows.push(`<td class="subheader" colspan="3">${code} ${stock?.name||''} ${stock?.market?'['+stock.market+']':''}</td><td class="btn-action center" onclick="refreshNews()">↻ 갱신</td>`);
+  }
   if(!cached){
     rows.push(`<td class="news-empty" colspan="4">뉴스 로딩 중...</td>`);
     return rows;
@@ -673,7 +684,8 @@ function newsPanelRows(code){
   }
   articles.slice(0,3).forEach((a,i)=>{
     const url=esc(a.url||'');
-    rows.push(`<td colspan="4" class="news-title" onclick="window.open('${url}','_blank')" title="새 창에서 열기">📰 ${esc(a.title||'')}</td>`);
+    const srcTag=a._src&&a._src!==code?` <span style="color:#dd6600;font-size:10px;">[${esc(STOCK_BY_CODE[a._src]?.name||a._src)}]</span>`:'';
+    rows.push(`<td colspan="4" class="news-title" onclick="window.open('${url}','_blank')" title="새 창에서 열기">📰 ${esc(a.title||'')}${srcTag}</td>`);
     if(a.summary){
       rows.push(`<td colspan="4" class="news-summary">${esc(a.summary)}…</td>`);
     }
@@ -1329,18 +1341,20 @@ function renderChart(){
   const code=state.selectedTicker;
   const stock=STOCK_BY_CODE[code]||{};
   const q=quoteCache[code];
-  const data=getChart(code);
+  const allData=getChart(code);
+  const period=state.chartPeriod||60;
+  const data=allData.slice(-period);
   let html=gridHeader(cols);
-  html+=rowStart(1)+`<td class="header-cell" colspan="${cols}">▣ 일봉 차트 — ${code} ${stock.name||''}</td>`+rowEnd();
+  html+=rowStart(1)+`<td class="header-cell" colspan="${cols}">▣ 일봉 차트 — ${code} ${stock.name||''} [${chartPeriodLabel(period)}, ${data.length}거래일]</td>`+rowEnd();
   html+=rowStart(2)+
     `<td class="subheader">종목</td>`+
     `<td class="input-cell" colspan="3">${tickerInput('cTicker',code)}</td>`+
     `<td class="subheader">현재가</td><td class="right ${q&&q.change>=0?'pos-pl':'neg-pl'}">${q?fmt(q.price):'-'}</td>`+
     `<td class="subheader">등락률</td><td class="right ${q&&q.change>=0?'pos-pl':'neg-pl'}">${q?fmtPct(q.changePct):'-'}</td>`+
-    `<td class="btn-action" onclick="regenChart()">차트 재생성</td>`+
-    `<td class="btn-action" onclick="refreshAllQuotes()">새로고침</td>`+rowEnd();
-  // chart SVG embedded in a single tall cell
-  html+=`<tr><th class="row-header">3</th><td colspan="${cols}" style="padding:0;height:auto;">${chartSVG(data)}</td></tr>`;
+    `<td class="btn-action" onclick="regenChart()">차트 새로고침</td>`+
+    `<td class="btn-warn center" onclick="cyclePeriod()">기간: ${chartPeriodLabel(period)}</td>`+rowEnd();
+  // chart SVG embedded in a single tall cell - 휠 줌 가능
+  html+=`<tr><th class="row-header">3</th><td colspan="${cols}" class="big-chart-cell" style="padding:0;height:auto;cursor:ns-resize;" onwheel="onChartWheel(event)">${chartSVG(data)}<div class="mini-chart-hint">휠↓ 기간 확대 (${chartPeriodLabel(period)}) / 휠↑ 단기 / 버튼 클릭으로 순환</div></td></tr>`;
   // recent OHLC table
   html+=rowStart(4)+`<td class="header-cell" colspan="${cols}">▣ 최근 일별 시세 (최근 10일)</td>`+rowEnd();
   html+=rowStart(5)+
@@ -1349,10 +1363,10 @@ function renderChart(){
     `<td class="subheader">등락률</td><td class="subheader">거래량</td>`+
     `<td class="subheader" colspan="2">캔들</td>`+rowEnd();
   let r=6;
-  const last10=data.slice(-10).reverse();
+  const last10=allData.slice(-10).reverse();
   for(let i=0;i<last10.length;i++){
     const d=last10[i];
-    const prev=data[data.length-1-i-1]?.close||d.open;
+    const prev=allData[allData.length-1-i-1]?.close||d.open;
     const chg=d.close-prev;
     const chgPct=(chg/prev)*100;
     const cls=chg>=0?'pos-pl':'neg-pl';
@@ -1370,6 +1384,15 @@ function renderChart(){
   while(r<28){html+=blankRow(r++,cols);}
   html+='</table>';
   return html;
+}
+
+// 차트 시트 기간 순환 (버튼 클릭용)
+function cyclePeriod(){
+  const idx=CHART_PERIODS.indexOf(state.chartPeriod);
+  state.chartPeriod=CHART_PERIODS[(idx+1)%CHART_PERIODS.length];
+  saveState();
+  setStatus(`차트 기간: ${chartPeriodLabel(state.chartPeriod)}`);
+  render();
 }
 
 function chartSVG(data){
@@ -1580,7 +1603,12 @@ function newsBottomRows(code){
   const cached=newsCache[code];
   const articles=cached?.articles||[];
   const rows=[];
-  rows.push(`<td class="header-cell" colspan="10">▣ ${stock?.name||code} 관련 뉴스 ${cached?.ts?'('+fmtTime(cached.ts)+' 갱신)':''} <span style="font-weight:normal;font-size:10px;cursor:pointer;" onclick="refreshNews()">↻</span></td>`);
+  let modeHint='';
+  if(cached?.mode==='etf_constituents'&&cached.representatives){
+    const repNames=cached.representatives.map(c=>STOCK_BY_CODE[c]?.name||c).join(', ');
+    modeHint=` <span style="font-weight:normal;font-size:10px;color:#dd6600;">— ETF 편입종목 뉴스 (${esc(repNames)})</span>`;
+  }
+  rows.push(`<td class="header-cell" colspan="10">▣ ${stock?.name||code} 관련 뉴스${modeHint} ${cached?.ts?'<span style="font-weight:normal;font-size:10px;">('+fmtTime(cached.ts)+' 갱신)</span>':''} <span style="font-weight:normal;font-size:10px;cursor:pointer;" onclick="refreshNews()">↻</span></td>`);
   if(!cached){
     rows.push(`<td class="news-empty" colspan="10">뉴스 로딩 중...</td>`);
     return rows;
@@ -1591,8 +1619,9 @@ function newsBottomRows(code){
   }
   articles.slice(0,3).forEach(a=>{
     const url=esc(a.url||'');
+    const srcTag=a._src&&a._src!==code?` <span style="color:#dd6600;font-size:10px;font-weight:600;">[${esc(STOCK_BY_CODE[a._src]?.name||a._src)}]</span>`:'';
     rows.push(
-      `<td class="news-title" colspan="7" onclick="window.open('${url}','_blank')">📰 ${esc(a.title||'')}</td>`+
+      `<td class="news-title" colspan="7" onclick="window.open('${url}','_blank')">📰 ${esc(a.title||'')}${srcTag}</td>`+
       `<td class="news-meta" colspan="2">${esc(a.office||'')}</td>`+
       `<td class="news-meta center">${esc(a.datetime||'')}</td>`
     );
