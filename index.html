@@ -2077,8 +2077,14 @@ function attachHandlers(){
       document.getElementById('bMaxQty').textContent=fmt(maxQ);
     };
     [$p,$q,$tp].forEach(el=>el&&el.addEventListener('input',upd));
-    attachTickerInput('bTicker',code=>{
-      state.selectedTicker=code;saveState();render();ensureNews(code);
+    attachTickerInput('bTicker',async code=>{
+      state.selectedTicker=code;saveState();render();
+      ensureNews(code);
+      // 새 종목 시세/호가 자동 로드 (캐시 없으면)
+      setStatus(`${tickerLabel(code)} 시세/호가 로드 중...`);
+      await fetchQuote(code);
+      setStatus('준비');
+      render();
     });
     upd();
   }
@@ -2110,9 +2116,14 @@ function attachHandlers(){
     };
     if($t){
       [$p,$q,$tp].forEach(el=>el&&el.addEventListener('input',upd));
-      attachTickerInput('sTicker',code=>{
+      attachTickerInput('sTicker',async code=>{
         if(!state.positions[code]) return alert('보유하지 않은 종목입니다: '+tickerLabel(code));
-        state.selectedTicker=code;saveState();render();ensureNews(code);
+        state.selectedTicker=code;saveState();render();
+        ensureNews(code);
+        setStatus(`${tickerLabel(code)} 시세/호가 로드 중...`);
+        await fetchQuote(code);
+        setStatus('준비');
+        render();
       });
       upd();
     }
@@ -2160,9 +2171,13 @@ function switchSheet(name){
   state.currentSheet=name;
   saveState();
   render();
-  // 뉴스 표시 시트면 자동 fetch
-  if(['buy','sell','balance'].includes(name)){
+  if(['buy','sell','balance','quote','chart'].includes(name)){
     ensureNews(state.selectedTicker);
+    // 선택종목 시세/호가가 캐시에 없으면 자동 로드 (ETF 등 비주류 종목 대응)
+    const code=state.selectedTicker;
+    if(code && !quoteCache[code]){
+      fetchQuote(code).then(()=>render()).catch(()=>{});
+    }
   }
 }
 function setStatus(s){document.getElementById('statusLeft').textContent=s;}
