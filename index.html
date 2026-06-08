@@ -656,6 +656,122 @@ function refreshNews(){
   ensureNews(code);
 }
 
+/* ===== 특정 날짜 뉴스 조회 (캔들 클릭) ===== */
+async function showDateNewsModal(code,date){
+  if(!code||!date) return;
+  date=String(date).replace(/-/g,'');
+  if(!/^\d{8}$/.test(date)){return alert('잘못된 날짜 형식: '+date);}
+  const stock=STOCK_BY_CODE[code]||{};
+  const chartData=chartCache[code]||[];
+  const dayData=chartData.find(d=>String(d.date||'').replace(/-/g,'')===date);
+  // 이전일 종가 (등락 계산용)
+  const dayIdx=chartData.findIndex(d=>String(d.date||'').replace(/-/g,'')===date);
+  const prevDay=dayIdx>0?chartData[dayIdx-1]:null;
+  const root=document.getElementById('modalRoot');
+  const ymd=`${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6,8)}`;
+  root.innerHTML=`
+    <div class="modal-bg" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:780px;max-width:95vw;max-height:88vh;display:flex;flex-direction:column;">
+        <div class="h">
+          <span>📅 ${ymd} · ${code} ${esc(stock.name||'')} ${stock.market?'['+stock.market+']':''}</span>
+          <span class="x" onclick="closeModal()">✕</span>
+        </div>
+        <div class="body" id="dateNewsBody" style="overflow-y:auto;flex:1;padding:14px;">
+          ${dayData?renderDateSummary(dayData,prevDay,ymd):'<div style="background:#fff7d6;padding:10px;margin-bottom:10px;font-size:11px;">⚠ 해당일 시세 데이터가 없습니다 (휴장일이거나 차트 범위 밖)</div>'}
+          <div id="dateNewsArticles" style="margin-top:10px;">
+            <div style="text-align:center;padding:30px;color:#888;">뉴스 검색 중... (페이지네이션 최대 60페이지 스캔)</div>
+          </div>
+        </div>
+        <div class="foot">
+          <button onclick="showDateNewsModal('${code}','${date}')">↻ 다시 검색</button>
+          <button class="primary" onclick="closeModal()">닫기</button>
+        </div>
+      </div>
+    </div>`;
+  try{
+    const r=await fetch(`/api/news?code=${code}&date=${date}&n=10`);
+    const j=await r.json();
+    const arts=j.articles||[];
+    const cont=document.getElementById('dateNewsArticles');
+    if(!cont) return;
+    if(arts.length===0){
+      const scanned=j.scanMeta?.scannedPages?.join('/')||'?';
+      cont.innerHTML=`<div style="padding:30px;text-align:center;color:#999;border:1px dashed #ccc;border-radius:4px;">
+        해당 날짜의 뉴스가 검색되지 않았습니다.<br>
+        <span style="font-size:10px;color:#bbb;">(스캔 페이지: ${esc(scanned)} / 너무 오래된 날짜는 페이지네이션 한계로 못 찾을 수 있음)</span>
+      </div>`;
+      return;
+    }
+    let html='';
+    if(j.mode==='etf_date'&&j.representatives){
+      const repNames=j.representatives.map(c=>STOCK_BY_CODE[c]?.name||c).join(', ');
+      html+=`<div style="background:#fff7d6;padding:6px 10px;margin-bottom:10px;font-size:11px;border-radius:3px;">⚠ ETF 편입종목 기사: ${esc(repNames)}</div>`;
+    }
+    html+=`<div style="font-size:11px;color:#666;margin-bottom:8px;">총 ${arts.length}건 (날짜 일치)</div>`;
+    arts.forEach(a=>{
+      const url=esc(a.url||'');
+      const srcTag=a._src&&a._src!==code?` <span style="color:#dd6600;font-size:10px;font-weight:600;">[${esc(STOCK_BY_CODE[a._src]?.name||a._src)}]</span>`:'';
+      html+=`<div style="border-left:3px solid #217346;padding:10px 14px;margin-bottom:10px;background:#f6fbf8;border-radius:0 3px 3px 0;">
+        <div style="font-weight:600;color:#1a4d2e;cursor:pointer;line-height:1.4;font-size:13px;" onclick="window.open('${url}','_blank')">📰 ${esc(a.title||'')}${srcTag}</div>
+        ${a.summary?`<div style="font-size:11px;color:#555;margin-top:6px;line-height:1.5;">${esc(a.summary)}…</div>`:''}
+        <div style="font-size:10px;color:#888;margin-top:6px;">${esc(a.office||'')} · ${esc(a.datetime||'')}</div>
+      </div>`;
+    });
+    cont.innerHTML=html;
+  }catch(e){
+    const cont=document.getElementById('dateNewsArticles');
+    if(cont) cont.innerHTML=`<div style="padding:30px;text-align:center;color:#c53030;">에러: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderDateSummary(d,prev,ymd){
+  const intraChg=((d.close-d.open)/d.open)*100;
+  const intraCls=intraChg>=0?'pos-pl':'neg-pl';
+  let prevHtml='';
+  if(prev){
+    const dayChg=((d.close-prev.close)/prev.close)*100;
+    const dayCls=dayChg>=0?'pos-pl':'neg-pl';
+    prevHtml=` / 전일대비 <span class="${dayCls}" style="font-weight:600;">${dayChg>=0?'+':''}${dayChg.toFixed(2)}%</span> (전일종가 ${fmt(prev.close)})`;
+  }
+  return `<div style="background:#f5f9f7;padding:10px 14px;border-left:3px solid #217346;font-size:12px;border-radius:0 3px 3px 0;">
+    <div style="font-weight:600;margin-bottom:6px;">${ymd} 시세</div>
+    <div style="line-height:1.6;">시가 <b>${fmt(d.open)}</b> · 고가 <b style="color:#c53030;">${fmt(d.high)}</b> · 저가 <b style="color:#2b6cb0;">${fmt(d.low)}</b> · 종가 <b>${fmt(d.close)}</b></div>
+    <div>일중 <span class="${intraCls}" style="font-weight:600;">${intraChg>=0?'+':''}${intraChg.toFixed(2)}%</span>${prevHtml} · 거래량 ${fmt(d.volume)}</div>
+  </div>`;
+}
+
+// 날짜 직접 입력 (모달)
+function openDatePickerModal(){
+  const code=state.selectedTicker;
+  if(!code) return alert('종목을 먼저 선택하세요.');
+  const stock=STOCK_BY_CODE[code]||{};
+  const today=new Date();
+  const todayStr=today.toISOString().slice(0,10);
+  const root=document.getElementById('modalRoot');
+  root.innerHTML=`
+    <div class="modal-bg" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:400px;">
+        <div class="h"><span>📅 특정 날짜 뉴스 조회 — ${code} ${esc(stock.name||'')}</span><span class="x" onclick="closeModal()">✕</span></div>
+        <div class="body">
+          <div class="msg" style="font-size:11px;">차트의 캔들을 클릭하면 그 날짜 뉴스를 바로 볼 수 있습니다. 또는 아래에서 직접 날짜를 입력하세요.</div>
+          <div class="row">
+            <label>조회 날짜</label>
+            <input type="date" id="datePickInput" max="${todayStr}" value="${todayStr}"/>
+          </div>
+        </div>
+        <div class="foot">
+          <button onclick="closeModal()">취소</button>
+          <button class="primary" onclick="applyDatePicker()">조회</button>
+        </div>
+      </div>
+    </div>`;
+}
+function applyDatePicker(){
+  const v=document.getElementById('datePickInput').value;
+  if(!v) return alert('날짜를 선택하세요.');
+  showDateNewsModal(state.selectedTicker,v.replace(/-/g,''));
+}
+
 function esc(s){
   if(s==null) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -1350,11 +1466,11 @@ function renderChart(){
     `<td class="subheader">종목</td>`+
     `<td class="input-cell" colspan="3">${tickerInput('cTicker',code)}</td>`+
     `<td class="subheader">현재가</td><td class="right ${q&&q.change>=0?'pos-pl':'neg-pl'}">${q?fmt(q.price):'-'}</td>`+
-    `<td class="subheader">등락률</td><td class="right ${q&&q.change>=0?'pos-pl':'neg-pl'}">${q?fmtPct(q.changePct):'-'}</td>`+
     `<td class="btn-action" onclick="regenChart()">차트 새로고침</td>`+
-    `<td class="btn-warn center" onclick="cyclePeriod()">기간: ${chartPeriodLabel(period)}</td>`+rowEnd();
+    `<td class="btn-warn center" onclick="cyclePeriod()">기간: ${chartPeriodLabel(period)}</td>`+
+    `<td class="btn-sell center" colspan="2" onclick="openDatePickerModal()">📅 특정일 뉴스</td>`+rowEnd();
   // chart SVG embedded in a single tall cell - 휠 줌 가능
-  html+=`<tr><th class="row-header">3</th><td colspan="${cols}" class="big-chart-cell" style="padding:0;height:auto;cursor:ns-resize;" onwheel="onChartWheel(event)">${chartSVG(data)}<div class="mini-chart-hint">휠↓ 기간 확대 (${chartPeriodLabel(period)}) / 휠↑ 단기 / 버튼 클릭으로 순환</div></td></tr>`;
+  html+=`<tr><th class="row-header">3</th><td colspan="${cols}" class="big-chart-cell" style="padding:0;height:auto;cursor:ns-resize;" onwheel="onChartWheel(event)">${chartSVG(data,code)}<div class="mini-chart-hint">휠↓ 기간 확대 (${chartPeriodLabel(period)}) / 휠↑ 단기 / 캔들 클릭 → 해당일 뉴스</div></td></tr>`;
   // recent OHLC table
   html+=rowStart(4)+`<td class="header-cell" colspan="${cols}">▣ 최근 일별 시세 (최근 10일)</td>`+rowEnd();
   html+=rowStart(5)+
@@ -1395,7 +1511,7 @@ function cyclePeriod(){
   render();
 }
 
-function chartSVG(data){
+function chartSVG(data,code){
   const W=1100, priceH=260, volH=70, pad=40;
   const n=data.length;
   if(!n) return '<div style="padding:40px;text-align:center;color:#999;">데이터 없음</div>';
@@ -1420,7 +1536,7 @@ function chartSVG(data){
     svg+=`<line class="grid-line" x1="${pad}" y1="${y}" x2="${W-pad}" y2="${y}"/>`;
     svg+=`<text x="${W-pad+4}" y="${y+3}">${fmt(p)}</text>`;
   }
-  // candles
+  // candles (클릭 시 해당일 뉴스)
   data.forEach((d,i)=>{
     const x=pad+cw*i+cw*0.15;
     const w=cw*0.7;
@@ -1430,12 +1546,19 @@ function chartSVG(data){
     const yO=py(d.open),yC=py(d.close);
     const bodyY=Math.min(yO,yC);
     const bodyH=Math.max(1,Math.abs(yC-yO));
+    const chg=((d.close-d.open)/d.open)*100;
+    const dateClean=String(d.date||'').replace(/-/g,'');
+    const tip=`${d.date} 시${fmt(d.open)} 종${fmt(d.close)} (${chg>=0?'+':''}${chg.toFixed(2)}%) — 클릭: 뉴스 조회`;
+    svg+=`<g style="cursor:pointer;" onclick="showDateNewsModal('${code||''}','${dateClean}')">`;
+    svg+=`<title>${tip}</title>`;
+    // 클릭 타겟 확장
+    const vBot=priceH+pad*2+volH;
+    svg+=`<rect x="${x-cw*0.15}" y="${pad}" width="${cw}" height="${vBot-pad}" fill="transparent"/>`;
     svg+=`<line class="${cls}" x1="${x+w/2}" y1="${yH}" x2="${x+w/2}" y2="${yL}"/>`;
     svg+=`<rect class="${cls}" x="${x}" y="${bodyY}" width="${w}" height="${bodyH}"/>`;
-    // volume bar
     const vyTop=vy(d.volume);
-    const vBot=priceH+pad*2+volH;
     svg+=`<rect class="${up?'vol-up':'vol-down'}" x="${x}" y="${vyTop}" width="${w}" height="${vBot-vyTop}"/>`;
+    svg+=`</g>`;
   });
   // MA lines
   const polyline=(arr,cls)=>{
@@ -1525,7 +1648,7 @@ function miniChartSVG(code){
   // 거래량 격자
   svg+=`<line x1="${padL}" y1="${vyTop+volH}" x2="${W-padR}" y2="${vyTop+volH}" stroke="#ccc" stroke-width="1"/>`;
   svg+=`<text x="${W-padR+4}" y="${vyTop+12}" font-size="10" fill="#999">거래량</text>`;
-  // 캔들
+  // 캔들 (클릭 시 해당일 뉴스 조회)
   data.forEach((d,i)=>{
     const x=padL+cw*i+cw*0.12;
     const w=Math.max(1,cw*0.76);
@@ -1536,10 +1659,18 @@ function miniChartSVG(code){
     const yO=py(d.open),yC=py(d.close);
     const bodyY=Math.min(yO,yC);
     const bodyH=Math.max(1.5,Math.abs(yC-yO));
+    const chg=((d.close-d.open)/d.open)*100;
+    const dateClean=String(d.date||'').replace(/-/g,'');
+    const tip=`${d.date} 시${fmt(d.open)} 종${fmt(d.close)} (${chg>=0?'+':''}${chg.toFixed(2)}%) — 클릭: 뉴스 조회`;
+    svg+=`<g style="cursor:pointer;" onclick="showDateNewsModal('${code}','${dateClean}')">`;
+    svg+=`<title>${tip}</title>`;
+    // 클릭 타겟 확장 (투명 큰 영역)
+    svg+=`<rect x="${x-cw*0.15}" y="${padTop}" width="${cw}" height="${priceH+gap+volH}" fill="transparent"/>`;
     svg+=`<line x1="${x+w/2}" y1="${yH}" x2="${x+w/2}" y2="${yL}" stroke="${stroke}" stroke-width="1.5"/>`;
     svg+=`<rect x="${x}" y="${bodyY}" width="${w}" height="${bodyH}" fill="${fill}" stroke="${stroke}" stroke-width="1.2"/>`;
     const vyT=vy(d.volume||0);
     svg+=`<rect x="${x}" y="${vyT}" width="${w}" height="${vyTop+volH-vyT}" fill="${up?'#f5a3a3':'#a3c1e0'}"/>`;
+    svg+=`</g>`;
   });
   // 이동평균선
   const polyline=(arr,color,sw)=>{

@@ -52,9 +52,13 @@ const ETF_REPRESENTATIVES = {
 
 export default async function handler(req, res) {
   const { code } = req.query;
-  const n = Math.max(1, Math.min(10, parseInt(req.query.n) || 3));
+  const n = Math.max(1, Math.min(20, parseInt(req.query.n) || 3));
+  const targetDate = (req.query.date || '').replace(/[^0-9]/g, '');  // YYYYMMDD
   if (!code || !/^[0-9A-Z]{6}$/.test(code)) {
     return res.status(400).json({ error: 'invalid code' });
+  }
+  if (targetDate && !/^\d{8}$/.test(targetDate)) {
+    return res.status(400).json({ error: 'date must be YYYYMMDD' });
   }
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=300');
@@ -73,9 +77,9 @@ export default async function handler(req, res) {
       .replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
   };
 
-  async function fetchOne(targetCode, pageSize) {
+  async function fetchPage(targetCode, page, pageSize) {
     try {
-      const r = await fetch(`https://m.stock.naver.com/api/news/stock/${targetCode}?pageSize=${pageSize}`, { headers });
+      const r = await fetch(`https://m.stock.naver.com/api/news/stock/${targetCode}?pageSize=${pageSize}&page=${page}`, { headers });
       if (!r.ok) return [];
       const groups = await r.json();
       if (!Array.isArray(groups)) return [];
@@ -108,17 +112,78 @@ export default async function handler(req, res) {
     }
   }
 
+  async function fetchOne(targetCode, n) { return fetchPage(targetCode, 1, n * 3); }
+
+  // 페이지네이션 검색: 특정 날짜 또는 그 이전까지 거슬러 찾기
+  async function searchByDate(targetCode, date, want, maxPages = 60) {
+    const found = [];
+    const seen = new Set();
+    let scannedPages = 0;
+    let lastBatchDate = null;
+    for (let page = 1; page <= maxPages; page++) {
+      scannedPages = page;
+      const articles = await fetchPage(targetCode, page, 10);
+      if (articles.length === 0) break;
+      for (const a of articles) {
+        const d = (a._rawTs || '').slice(0, 8);
+        if (d === date && !seen.has(a.id)) {
+          seen.add(a.id);
+          found.push(a);
+        }
+      }
+      if (found.length >= want) break;
+      // 페이지가 모두 타겟 날짜보다 오래된 게 되면 더 이상 안 나옴
+      const oldestInPage = articles
+        .map(a => (a._rawTs || '').slice(0, 8))
+        .filter(Boolean)
+        .sort()[0];
+      lastBatchDate = oldestInPage;
+      if (oldestInPage && oldestInPage < date) break;
+    }
+    return { articles: found, scannedPages, lastBatchDate };
+  }
+
   try {
     const reps = ETF_REPRESENTATIVES[code];
     let articles;
     let mode = 'direct';
+    let scanMeta = null;
 
-    if (reps && reps.length > 0) {
-      // ETF: 대표 편입종목 뉴스 병렬 fetch, 종목별 1건씩 take
+    if (targetDate) {
+      // ===== 특정 날짜 검색 =====
+      mode = reps ? 'etf_date' : 'date';
+      const sources = reps && reps.length > 0 ? reps : [code];
+      const perSource = Math.max(2, Math.ceil(n / sources.length) + 1);
+      const results = await Promise.all(
+        sources.map(c => searchByDate(c, targetDate, perSource, 60))
+      );
+      // 종목별 round-robin
+      articles = [];
+      const seenIds = new Set();
+      let cursor = 0;
+      const maxCur = Math.max(...results.map(r => r.articles.length));
+      while (articles.length < n && cursor < maxCur) {
+        for (let i = 0; i < sources.length && articles.length < n; i++) {
+          const a = results[i].articles[cursor];
+          if (!a || seenIds.has(a.id)) continue;
+          seenIds.add(a.id);
+          articles.push(a);
+        }
+        cursor++;
+      }
+      // 최신순(해당일 안에서)
+      articles.sort((a, b) => (b._rawTs || '').localeCompare(a._rawTs || ''));
+      scanMeta = {
+        targetDate,
+        sources,
+        scannedPages: results.map(r => r.scannedPages),
+        lastBatchDate: results.map(r => r.lastBatchDate)
+      };
+    } else if (reps && reps.length > 0) {
+      // ETF: 대표 편입종목 뉴스 병렬 fetch
       mode = 'etf_constituents';
       const perStock = Math.ceil(n / reps.length) + 1;
       const lists = await Promise.all(reps.map(c => fetchOne(c, perStock + 2)));
-      // 종목별로 1건씩 round-robin
       articles = [];
       const seenIds = new Set();
       let cursor = 0;
@@ -131,10 +196,9 @@ export default async function handler(req, res) {
         }
         cursor++;
       }
-      // 최신순 정렬
       articles.sort((a, b) => (b._rawTs || '').localeCompare(a._rawTs || ''));
     } else {
-      // 일반 종목: 그대로
+      // 일반 종목: 최신
       articles = await fetchOne(code, n * 3);
       articles = articles.slice(0, n);
     }
@@ -144,6 +208,7 @@ export default async function handler(req, res) {
       mode,
       representatives: reps || null,
       articles,
+      scanMeta,
       ts: Date.now()
     });
   } catch (e) {
