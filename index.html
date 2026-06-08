@@ -2,6 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=5.0">
 <title>월간실적분석_v2.xlsx  -  Excel</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;}
@@ -241,6 +242,103 @@
   svg.chart .ma20{stroke:#2b8c4a;stroke-width:1;fill:none;}
   svg.chart .ma60{stroke:#7a3eb1;stroke-width:1;fill:none;}
   svg.chart .legend{font-size:10px;}
+
+  /* =============================================================
+     모바일 모드 (body.mobile-mode 또는 자동감지)
+     ============================================================= */
+  body.mobile-mode{
+    font-size:13px;
+    -webkit-text-size-adjust:100%;
+    touch-action:manipulation;
+  }
+  body.mobile-mode .title-bar{height:26px;font-size:11px;}
+  body.mobile-mode .title-bar .qa{display:none;}
+  body.mobile-mode .title-bar .winbtns div{width:34px;height:26px;}
+  /* 리본 탭 가로 스크롤 */
+  body.mobile-mode .ribbon-tabs{
+    height:34px;font-size:13px;overflow-x:auto;
+    white-space:nowrap;scrollbar-width:none;
+  }
+  body.mobile-mode .ribbon-tabs::-webkit-scrollbar{display:none;}
+  body.mobile-mode .ribbon-tabs .tab{padding:8px 12px;flex-shrink:0;}
+  /* 리본 컨텐츠 압축 */
+  body.mobile-mode .ribbon-content{
+    height:56px;padding:2px;overflow-x:auto;overflow-y:hidden;
+    scrollbar-width:none;
+  }
+  body.mobile-mode .ribbon-content::-webkit-scrollbar{display:none;}
+  body.mobile-mode .rgroup{min-width:54px;padding:2px 4px;flex-shrink:0;}
+  body.mobile-mode .rgroup .glabel{display:none;}
+  body.mobile-mode .rbtn{padding:6px 4px;font-size:9px;}
+  body.mobile-mode .rbtn .ic{font-size:18px;margin-bottom:0;}
+  body.mobile-mode .rbtn.big{min-width:48px;}
+  /* 편집 도구 4개 그룹 모바일에서 숨김 (붙여넣기/글꼴/맞춤/표시형식) */
+  body.mobile-mode .rgroup:nth-child(1),
+  body.mobile-mode .rgroup:nth-child(2),
+  body.mobile-mode .rgroup:nth-child(3),
+  body.mobile-mode .rgroup:nth-child(4){display:none;}
+  /* 수식바 숨김 */
+  body.mobile-mode .formula-row{display:none;}
+  /* 시트탭 가로 스크롤 + 터치 친화적 */
+  body.mobile-mode .sheet-tabs{
+    height:46px;font-size:13px;padding:0 4px;align-items:center;
+  }
+  body.mobile-mode .sheet-tab{
+    padding:10px 14px;flex-shrink:0;border-radius:4px;
+    border:1px solid #d0d0d0;margin-right:4px;
+  }
+  body.mobile-mode .sheet-tabs .nav,
+  body.mobile-mode .sheet-tabs .add{display:none;}
+  /* 시트 영역 높이 재계산 */
+  body.mobile-mode .sheet-area{
+    height:calc(100vh - 26px - 34px - 56px - 46px - 22px);
+    overflow:auto;-webkit-overflow-scrolling:touch;
+  }
+  /* 셀 그리드 */
+  body.mobile-mode table.grid th,
+  body.mobile-mode table.grid td{
+    font-size:11px;height:auto;min-height:22px;
+  }
+  body.mobile-mode table.grid th.col{min-width:58px;}
+  body.mobile-mode table.grid td{padding:3px 5px;}
+  body.mobile-mode table.grid td.big-num{font-size:18px;}
+  body.mobile-mode table.grid td.input-cell input,
+  body.mobile-mode table.grid td.input-cell select{
+    font-size:13px;min-height:30px;
+  }
+  body.mobile-mode table.grid td.btn-buy,
+  body.mobile-mode table.grid td.btn-sell,
+  body.mobile-mode table.grid td.btn-action,
+  body.mobile-mode table.grid td.btn-warn{
+    min-height:36px;font-size:13px;
+  }
+  /* 미니 차트 컴팩트 */
+  body.mobile-mode table.grid td.mini-chart-cell{
+    min-width:340px;padding:4px;
+  }
+  body.mobile-mode table.grid td.mini-chart-cell svg{max-width:600px;}
+  body.mobile-mode .mini-chart-hint{font-size:10px;padding:4px;}
+  /* 상태바 */
+  body.mobile-mode .status-bar{height:22px;font-size:10px;padding:0 8px;}
+  body.mobile-mode .status-bar .right span:nth-child(2),
+  body.mobile-mode .status-bar .right span:nth-child(3){display:none;}
+  body.mobile-mode #statusMid{display:none;}
+  /* 모달 거의 전체화면 */
+  body.mobile-mode .modal{
+    width:96vw !important;max-width:96vw !important;
+    max-height:92vh !important;
+  }
+  body.mobile-mode .modal .body{padding:10px;max-height:75vh;overflow-y:auto;}
+  body.mobile-mode .modal .h{font-size:13px;padding:8px 12px;}
+  body.mobile-mode .modal input,
+  body.mobile-mode .modal select{font-size:14px;min-height:36px;}
+  /* 뉴스 셀 */
+  body.mobile-mode table.grid td.news-title{padding:8px 10px;font-size:12px;line-height:1.4;}
+  body.mobile-mode table.grid td.news-summary{padding:4px 10px 6px;font-size:11px;}
+  /* 모바일 뱃지 (상태바 좌측에 모드 표시) */
+  body.mobile-mode #statusLeft::before{
+    content:'📱 ';
+  }
 </style>
 </head>
 <body>
@@ -390,7 +488,8 @@ const DEFAULT_STATE={
   selectedTicker:'005930',
   config:{
     mode:'naver', kisAppKey:'', kisAppSecret:'', corsProxy:'',
-    feeRate:0.00015, taxRate:0.0018
+    feeRate:0.00015, taxRate:0.0018,
+    viewMode:'auto'  // auto | mobile | desktop
   },
   currentSheet:'dashboard',
   lastQuoteFetch:0,
@@ -2348,28 +2447,44 @@ function renderSettings(){
     blank(cols,8)+rowEnd();
   html+=blankRow(14,cols);
 
-  html+=rowStart(15)+
-    `<td class="btn-action" colspan="3" onclick="applyConfigInline()">▶ API/거래설정 저장</td>`+
+  // ④ 뷰모드 (모바일/데스크탑/자동)
+  const vm=state.config.viewMode||'auto';
+  const isMob=document.body.classList.contains('mobile-mode');
+  html+=rowStart(15)+`<td class="subheader" colspan="${cols}">④ 화면 모드 (모바일 / 데스크탑)</td>`+rowEnd();
+  html+=rowStart(16)+
+    `<td class="label">뷰모드</td>`+
+    `<td class="input-cell" colspan="3"><select id="setViewMode">`+
+      `<option value="auto"${vm==='auto'?' selected':''}>auto (화면크기 자동 감지 — 권장)</option>`+
+      `<option value="mobile"${vm==='mobile'?' selected':''}>📱 mobile (모바일 강제)</option>`+
+      `<option value="desktop"${vm==='desktop'?' selected':''}>🖥 desktop (데스크탑 강제)</option>`+
+    `</select></td>`+
+    `<td class="label">현재화면</td>`+
+    `<td class="center" colspan="2"><b>${isMob?'📱 모바일':'🖥 데스크탑'}</b> (${window.innerWidth}px)</td>`+
+    `<td class="btn-warn center" colspan="2" onclick="applyViewModeQuick('${vm==='mobile'?'desktop':'mobile'}')">${vm==='mobile'?'🖥 데스크탑으로':'📱 모바일로'} 즉시 전환</td>`+rowEnd();
+  html+=blankRow(17,cols);
+
+  html+=rowStart(18)+
+    `<td class="btn-action" colspan="3" onclick="applyConfigInline()">▶ 전체 설정 저장</td>`+
     `<td class="btn-warn" colspan="3" onclick="refreshAllQuotes()">시세 새로고침</td>`+
     `<td class="btn-sell" colspan="2" onclick="resetAll()">전체 초기화</td>`+
     blank(cols,9)+rowEnd();
-  html+=blankRow(16,cols);
+  html+=blankRow(19,cols);
 
-  html+=rowStart(17)+`<td class="subheader" colspan="${cols}">④ 디버깅 정보</td>`+rowEnd();
+  html+=rowStart(20)+`<td class="subheader" colspan="${cols}">⑤ 디버깅 정보</td>`+rowEnd();
   const heldCount=Object.keys(state.positions).length;
-  html+=rowStart(18)+
+  html+=rowStart(21)+
     `<td class="label">최종 시세갱신</td><td class="right" colspan="2">${fmtDate(state.lastQuoteFetch)}</td>`+
     `<td class="label">보유종목</td><td class="right">${heldCount}</td>`+
     `<td class="label">미체결</td><td class="right">${state.pendingOrders.length}</td>`+
     `<td class="label">거래내역</td><td class="right">${state.history.length}</td>`+
     blank(cols,10)+rowEnd();
-  html+=rowStart(19)+
+  html+=rowStart(22)+
     `<td class="label">자동갱신</td><td class="center">${state.autoRefresh?'ON (5초)':'OFF'}</td>`+
     `<td class="label">현재시트</td><td class="center">${state.currentSheet}</td>`+
     `<td class="label">선택종목</td><td class="center">${state.selectedTicker}</td>`+
     `<td class="label">로컬저장</td><td class="center">${LS_KEY}</td>`+
     blank(cols,9)+rowEnd();
-  for(let cur=20;cur<=28;cur++) html+=blankRow(cur,cols);
+  for(let cur=23;cur<=30;cur++) html+=blankRow(cur,cols);
   html+='</table>';
   return html;
 }
@@ -2390,9 +2505,20 @@ function applyConfigInline(){
   state.config.corsProxy=document.getElementById('setProxy').value.trim();
   state.config.feeRate=parseFloat(document.getElementById('setFee').value)||0;
   state.config.taxRate=parseFloat(document.getElementById('setTax').value)||0;
+  const vm=document.getElementById('setViewMode');
+  if(vm) state.config.viewMode=vm.value;
   saveState();
-  setStatus(`설정 저장: API 모드 = ${state.config.mode.toUpperCase()}`);
+  applyViewMode();
+  setStatus(`설정 저장: API=${state.config.mode.toUpperCase()} / 뷰=${state.config.viewMode||'auto'}`);
+  render();
   refreshAllQuotes();
+}
+function applyViewModeQuick(mode){
+  state.config.viewMode=mode;
+  saveState();
+  applyViewMode();
+  render();
+  setStatus(`뷰모드 변경: ${mode==='auto'?'자동 (화면크기 감지)':mode==='mobile'?'📱 모바일':'🖥 데스크탑'}`);
 }
 
 /* =================================================================
@@ -2546,6 +2672,22 @@ function switchSheet(name){
 }
 function setStatus(s){document.getElementById('statusLeft').textContent=s;}
 
+/* ===== 뷰모드 (모바일/데스크탑) ===== */
+function applyViewMode(){
+  const mode=state.config.viewMode||'auto';
+  document.body.classList.remove('mobile-mode','desktop-mode');
+  let useMobile=false;
+  if(mode==='mobile') useMobile=true;
+  else if(mode==='desktop') useMobile=false;
+  else useMobile=window.innerWidth<768;  // auto
+  document.body.classList.add(useMobile?'mobile-mode':'desktop-mode');
+  // 뷰포트가 모바일이면 차트도 컴팩트화
+  if(useMobile&&state.chartPeriod>120) state.chartPeriod=60;
+}
+window.addEventListener('resize',()=>{
+  if((state.config.viewMode||'auto')==='auto') applyViewMode();
+});
+
 /* =================================================================
    MODAL
    ================================================================= */
@@ -2654,6 +2796,7 @@ document.addEventListener('keydown',e=>{
    INIT
    ================================================================= */
 (async function init(){
+  applyViewMode();  // 뷰모드 즉시 적용 (모바일 자동 감지)
   setStatus('초기화 중...');
   render();  // 빈 상태로 즉시 표시
 
