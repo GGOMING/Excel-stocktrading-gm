@@ -366,6 +366,47 @@
     width:8px;height:8px;border-radius:50%;
     background:#F37321;animation:demoPulse 1.2s infinite;
   }
+  /* 데모 화살표 (요소 가리키기) */
+  .demo-arrow{
+    position:fixed;z-index:9998;pointer-events:none;
+    width:54px;height:54px;
+    background:#F37321;color:#fff;
+    font-size:32px;font-weight:900;
+    display:flex;align-items:center;justify-content:center;
+    border-radius:50%;
+    box-shadow:0 6px 24px rgba(243,115,33,0.7),
+               0 0 0 4px rgba(243,115,33,0.25);
+    animation:demoArrowBounce 1.1s cubic-bezier(.5,0,.5,1) infinite;
+    text-shadow:0 1px 3px rgba(0,0,0,0.3);
+  }
+  @keyframes demoArrowBounce{
+    0%,100%{transform:translateY(0);}
+    50%{transform:translateY(-12px);}
+  }
+  /* 데모 외부 오버레이 (SVG/non-positioned 요소용) */
+  .demo-overlay-ring{
+    position:fixed;z-index:9997;pointer-events:none;
+    border:3px solid #F37321;border-radius:8px;
+    box-shadow:0 0 32px rgba(243,115,33,0.8),
+               inset 0 0 24px rgba(243,115,33,0.25);
+    animation:demoPulse 1.1s infinite;
+  }
+  /* 클릭 리플 (버튼 눌렀을 때 시각화) */
+  .demo-ripple{
+    position:fixed;z-index:9999;pointer-events:none;
+    width:50px;height:50px;
+    border:4px solid #F37321;
+    border-radius:50%;
+    animation:demoRipple 0.75s ease-out forwards;
+  }
+  @keyframes demoRipple{
+    0%{transform:scale(0);opacity:1;}
+    100%{transform:scale(4);opacity:0;}
+  }
+  /* 시트 전환 부드러운 페이드 */
+  .sheet-area.demo-fading{
+    transition:opacity 0.22s ease;
+  }
 
   /* =============================================================
      모바일 모드 (body.mobile-mode 또는 자동감지)
@@ -1838,7 +1879,7 @@ function chartSVG(data,code){
     const chg=((d.close-d.open)/d.open)*100;
     const dateClean=String(d.date||'').replace(/-/g,'');
     const tip=`${d.date} 시${fmt(d.open)} 종${fmt(d.close)} (${chg>=0?'+':''}${chg.toFixed(2)}%) — 클릭: 뉴스 조회`;
-    svg+=`<g style="cursor:pointer;" onclick="showDateNewsModal('${code||''}','${dateClean}')">`;
+    svg+=`<g class="chart-candle" style="cursor:pointer;" data-date="${dateClean}" onclick="showDateNewsModal('${code||''}','${dateClean}')">`;
     svg+=`<title>${tip}</title>`;
     // 클릭 타겟 확장
     const vBot=priceH+pad*2+volH;
@@ -1951,7 +1992,7 @@ function miniChartSVG(code){
     const chg=((d.close-d.open)/d.open)*100;
     const dateClean=String(d.date||'').replace(/-/g,'');
     const tip=`${d.date} 시${fmt(d.open)} 종${fmt(d.close)} (${chg>=0?'+':''}${chg.toFixed(2)}%) — 클릭: 뉴스 조회`;
-    svg+=`<g style="cursor:pointer;" onclick="showDateNewsModal('${code}','${dateClean}')">`;
+    svg+=`<g class="chart-candle" style="cursor:pointer;" data-date="${dateClean}" onclick="showDateNewsModal('${code}','${dateClean}')">`;
     svg+=`<title>${tip}</title>`;
     // 클릭 타겟 확장 (투명 큰 영역)
     svg+=`<rect x="${x-cw*0.15}" y="${padTop}" width="${cw}" height="${priceH+gap+volH}" fill="transparent"/>`;
@@ -3069,6 +3110,71 @@ function dHighlight(selector,duration=2500){
   setTimeout(()=>el.classList.remove('demo-highlight'),duration);
 }
 
+// SVG 등 :after 안 먹는 요소용 외부 오버레이 링
+function dRing(selector,duration=2500){
+  const el=typeof selector==='string'?document.querySelector(selector):selector;
+  if(!el) return null;
+  const r=el.getBoundingClientRect();
+  const ring=document.createElement('div');
+  ring.className='demo-overlay-ring';
+  ring.style.left=`${r.left-6}px`;
+  ring.style.top=`${r.top-6}px`;
+  ring.style.width=`${r.width+12}px`;
+  ring.style.height=`${r.height+12}px`;
+  document.body.appendChild(ring);
+  setTimeout(()=>ring.remove(),duration);
+  return ring;
+}
+
+// 화살표로 요소 가리키기 (자동으로 위/아래 위치 결정)
+function dPointAt(selector,opts={}){
+  const el=typeof selector==='string'?document.querySelector(selector):selector;
+  if(!el) return null;
+  const r=el.getBoundingClientRect();
+  const arrow=document.createElement('div');
+  arrow.className='demo-arrow';
+  const wantBelow=r.top<140||opts.side==='below';
+  arrow.textContent=wantBelow?'⬆':'⬇';
+  const cx=r.left+r.width/2-27;
+  const cy=wantBelow?(r.bottom+14):(r.top-68);
+  arrow.style.left=`${Math.max(8,cx)}px`;
+  arrow.style.top=`${cy}px`;
+  document.body.appendChild(arrow);
+  return arrow;
+}
+function dRemove(el){if(el&&el.parentNode) el.remove();}
+
+// 클릭 시 리플 효과
+function dRipple(selectorOrEl){
+  const el=typeof selectorOrEl==='string'?document.querySelector(selectorOrEl):selectorOrEl;
+  if(!el) return;
+  const r=el.getBoundingClientRect();
+  const dot=document.createElement('div');
+  dot.className='demo-ripple';
+  dot.style.left=`${r.left+r.width/2-25}px`;
+  dot.style.top=`${r.top+r.height/2-25}px`;
+  document.body.appendChild(dot);
+  setTimeout(()=>dot.remove(),800);
+}
+
+// 부드러운 시트 전환 (페이드)
+async function dSwitchSheet(name){
+  const area=document.getElementById('sheetArea');
+  if(area){
+    area.classList.add('demo-fading');
+    area.style.opacity='0';
+    await dSleep(220);
+  }
+  switchSheet(name);
+  if(area){
+    await dSleep(40);
+    area.style.opacity='1';
+    await dSleep(220);
+    area.classList.remove('demo-fading');
+    area.style.opacity='';
+  }
+}
+
 async function dNarrate(opts){
   if(demoOverlay){demoOverlay.remove();demoOverlay=null;}
   const o=document.createElement('div');
@@ -3123,8 +3229,7 @@ async function runDemo(){
     await dCheckStop();
 
     // ─── 1. 주요지표 시작화면 ───
-    switchSheet('dashboard');
-    await dSleep(700);
+    await dSwitchSheet('dashboard');
     await dNarrate({
       label:'01 · 첫 화면',
       text:'💡 시작 화면은 <b>월간실적분석.xlsx</b><br>완벽한 Excel 위장 — 셀, 리본, 시트탭까지',
@@ -3133,38 +3238,58 @@ async function runDemo(){
     await dCheckStop();
 
     // ─── 2. 시드머니 설정 ───
-    switchSheet('settings');
-    await dSleep(600);
+    await dSwitchSheet('settings');
     await dNarrate({
       label:'02 · 시드머니',
-      text:'💰 <b>시드머니 5천만원</b>으로 시작<br>1만원부터 무제한까지 자유롭게 설정 가능',
-      duration:3500
+      text:'💰 <b>시드머니 5천만원</b>으로 시작<br>입력창에 금액 입력 → [적용] 클릭',
+      duration:4000
     });
-    dHighlight('#setSeed',3500);
     const seedInput=document.getElementById('setSeed');
+    let seedArrow=null;
     if(seedInput){
+      seedArrow=dPointAt('#setSeed');
+      dHighlight('#setSeed',4000);
+      await dSleep(900);
+      seedInput.focus();
+      seedInput.value='';
+      // 시드머니 한 자리씩 타이핑 (시각 효과)
+      const seedTxt='50000000';
+      for(const ch of seedTxt){
+        if(demoStopRequested) break;
+        seedInput.value+=ch;
+        seedInput.dispatchEvent(new Event('input',{bubbles:true}));
+        await dSleep(120);
+      }
       await dSleep(800);
-      seedInput.value='50000000';
-      seedInput.dispatchEvent(new Event('input',{bubbles:true}));
-      await dSleep(1200);
-      applySeedInline();
-      await dSleep(800);
+      dRemove(seedArrow);
+      // 적용 버튼 가리키기
+      const seedBtn=document.querySelector('[onclick*="applySeedInline"]');
+      if(seedBtn){
+        const btnArrow=dPointAt(seedBtn,{side:'below'});
+        dHighlight(seedBtn,1500);
+        await dSleep(900);
+        dRipple(seedBtn);
+        await dSleep(300);
+        applySeedInline();
+        dRemove(btnArrow);
+      }
+      await dSleep(900);
     }
     await dCheckStop();
 
     // ─── 3. 매수 시트 이동 + 종목 검색 ───
-    switchSheet('buy');
-    await dSleep(900);
+    await dSwitchSheet('buy');
     await dNarrate({
       label:'03 · 종목 검색',
       text:`💡 종목 검색 — <b>${DEMO_NAME}</b><br>이름·코드 모두 가능 (KRX 전종목 3,900+ 지원)`,
-      duration:3500
+      duration:4000
     });
-    dHighlight('#bTicker',6000);
-    await dSleep(500);
-    await dType('#bTicker',DEMO_NAME,90);
-    await dSleep(800);
-    // 강제로 ticker 변경 트리거 (parseTickerInput으로 코드 추출됨)
+    const tickerArrow=dPointAt('#bTicker');
+    dHighlight('#bTicker',7000);
+    await dSleep(700);
+    await dType('#bTicker',DEMO_NAME,95);
+    await dSleep(900);
+    dRemove(tickerArrow);
     state.selectedTicker=DEMO_STOCK;
     saveState();
     ensureNews(DEMO_STOCK);
@@ -3185,48 +3310,88 @@ async function runDemo(){
     // ─── 5. 차트 휠 줌 시연 ───
     await dNarrate({
       label:'05 · 차트 휠 줌',
-      text:'💡 차트 위에서 <b>마우스 휠</b><br>↓ 기간 확대 (3개월 → 1년 → 3년)<br>↑ 단기 확대 (1주 → 2주)',
+      text:'💡 차트 위 <b>마우스 휠</b><br>↓ 기간 확대 (3개월 → 6개월 → 1년)<br>↑ 단기 확대',
       duration:4500
     });
-    dHighlight('.mini-chart-cell',5000);
-    // 실제로 휠 조작 시뮬레이션
-    await dSleep(1500);
+    const chartArrow=dPointAt('.mini-chart-cell',{side:'above'});
+    dHighlight('.mini-chart-cell',5500);
+    await dSleep(1200);
     state.chartPeriod=120;saveState();render();
     await dSleep(1200);
     state.chartPeriod=240;saveState();render();
     await dSleep(1200);
-    state.chartPeriod=60;saveState();render();
+    state.chartPeriod=120;saveState();render();  // 2월 20일 보이도록 6개월로 유지
     await dSleep(800);
+    dRemove(chartArrow);
     await dCheckStop();
 
-    // ─── 6. 캔들 클릭 안내 ───
+    // ─── 6. 2월 20일 캔들 클릭 → 그날 뉴스 ───
     await dNarrate({
       label:'06 · 그날 뉴스 추적',
-      text:'🔍 차트의 <b>캔들 클릭</b> → 그날 뉴스 자동 팝업<br>"이날 왜 급등했지?" 즉시 추적 가능',
-      duration:4800
+      text:'🔍 차트의 <b>2월 20일 캔들</b>을 클릭해보면<br>그날 시세 + 관련 뉴스가 자동 팝업',
+      duration:4500
     });
+    // 2월 20일 캔들 찾기 + 강조 + 클릭
+    const candle=document.querySelector('.mini-chart-cell svg g.chart-candle[data-date="20260220"]');
+    let candleRing=null,candleArrow=null;
+    if(candle){
+      candleRing=dRing(candle,4500);
+      candleArrow=dPointAt(candle);
+      await dSleep(2200);
+      dRipple(candle);
+      await dSleep(300);
+      showDateNewsModal(DEMO_STOCK,'20260220');
+      await dSleep(4500);  // 모달 보기
+      closeModal();
+      dRemove(candleRing);
+      dRemove(candleArrow);
+    }else{
+      // 2월 20일이 차트 범위 밖이면 안내
+      await dNarrate({
+        text:'(2월 20일 캔들 표시 범위 밖)',
+        duration:1500
+      });
+    }
+    await dSleep(600);
     await dCheckStop();
 
     // ─── 7. 시장가 매수 ───
-    const bQty=document.getElementById('bQty');
-    if(bQty){
-      bQty.value='50';
-      bQty.dispatchEvent(new Event('input',{bubbles:true}));
-    }
     await dNarrate({
       label:'07 · 매수 실행',
       text:`🛒 <b>${DEMO_NAME} 50주</b> 시장가 매수`,
-      duration:3000
+      duration:3500
     });
-    dHighlight('td.btn-buy',2500);
-    await dSleep(1500);
-    onBuy();
+    const bQty=document.getElementById('bQty');
+    let qtyArrow=null;
+    if(bQty){
+      qtyArrow=dPointAt('#bQty');
+      dHighlight('#bQty',2500);
+      await dSleep(700);
+      bQty.value='';
+      for(const ch of '50'){
+        bQty.value+=ch;
+        bQty.dispatchEvent(new Event('input',{bubbles:true}));
+        await dSleep(160);
+      }
+      await dSleep(700);
+      dRemove(qtyArrow);
+    }
+    // 매수 버튼 가리키기
+    const buyBtn=document.querySelector('td.btn-buy');
+    if(buyBtn){
+      const buyArrow=dPointAt(buyBtn,{side:'below'});
+      dHighlight(buyBtn,2500);
+      await dSleep(1200);
+      dRipple(buyBtn);
+      await dSleep(250);
+      onBuy();
+      dRemove(buyArrow);
+    }
     await dSleep(3500);  // 체결 토스트 표시
     await dCheckStop();
 
     // ─── 8. 잔고 시트 ───
-    switchSheet('balance');
-    await dSleep(900);
+    await dSwitchSheet('balance');
     await dNarrate({
       label:'08 · 잔고 확인',
       text:'💼 잔고 시트 — 보유 종목 자동 집계<br>💡 종목명 <b>더블클릭</b> → 매수 화면 바로 진입',
@@ -3235,8 +3400,7 @@ async function runDemo(){
     await dCheckStop();
 
     // ─── 9. 지정가 매도 ───
-    switchSheet('sell');
-    await dSleep(900);
+    await dSwitchSheet('sell');
     await dNarrate({
       label:'09 · 지정가 매도',
       text:'📋 지정가 매도 — <b>+5% 가격</b>에 걸어두기<br>시세 도달 시 자동 체결',
@@ -3245,37 +3409,60 @@ async function runDemo(){
     const sType=document.getElementById('sType');
     if(sType){sType.value='LIMIT';sType.dispatchEvent(new Event('input',{bubbles:true}));}
     const sQty=document.getElementById('sQty');
-    if(sQty){sQty.value='20';sQty.dispatchEvent(new Event('input',{bubbles:true}));}
+    let sQtyArrow=null;
+    if(sQty){
+      sQtyArrow=dPointAt('#sQty');
+      dHighlight('#sQty',2500);
+      await dSleep(600);
+      sQty.value='';
+      for(const ch of '20'){
+        sQty.value+=ch;
+        sQty.dispatchEvent(new Event('input',{bubbles:true}));
+        await dSleep(160);
+      }
+      await dSleep(500);
+      dRemove(sQtyArrow);
+    }
     const sPrice=document.getElementById('sPrice');
     const q=quoteCache[DEMO_STOCK];
     if(sPrice&&q){
+      const sPriceArrow=dPointAt('#sPrice');
+      dHighlight('#sPrice',2500);
+      await dSleep(700);
       sPrice.value=roundToTick(Math.round(q.price*1.05));
       sPrice.dispatchEvent(new Event('input',{bubbles:true}));
+      await dSleep(700);
+      dRemove(sPriceArrow);
     }
-    await dSleep(1200);
-    dHighlight('td.btn-sell',2000);
-    await dSleep(500);
-    onSell();
+    // 매도 버튼
+    const sellBtn=document.querySelector('td.btn-sell');
+    if(sellBtn){
+      const sellArrow=dPointAt(sellBtn,{side:'below'});
+      dHighlight(sellBtn,2200);
+      await dSleep(1000);
+      dRipple(sellBtn);
+      await dSleep(250);
+      onSell();
+      dRemove(sellArrow);
+    }
     await dSleep(3000);
     await dCheckStop();
 
     // ─── 10. Boss Key ───
-    switchSheet('buy');
-    await dSleep(600);
+    await dSwitchSheet('buy');
     await dNarrate({
       label:'10 · Boss Key',
       text:'🎯 <b>부장님 다가오면?</b><br>Ctrl + \\ → 즉시 빈 워크시트로 위장<br>다시 Ctrl + \\ → 원래 화면 복귀',
       duration:4500
     });
-    panicHide();  // 위장
+    panicHide();
     await dSleep(2800);
-    panicHide();  // 복귀
+    panicHide();
     await dSleep(800);
     await dCheckStop();
 
     // ─── 11. 시장지표 ───
-    switchSheet('market');
-    await dSleep(900);
+    await dSwitchSheet('market');
     await dNarrate({
       label:'11 · 시장 현황',
       text:'📊 <b>KOSPI/KOSDAQ 실시간 지수</b><br>상승률 · 하락률 · 거래대금 TOP 10 자동 집계',
@@ -3284,8 +3471,7 @@ async function runDemo(){
     await dCheckStop();
 
     // ─── 12. 마무리 ───
-    switchSheet('dashboard');
-    await dSleep(900);
+    await dSwitchSheet('dashboard');
     await dNarrate({
       cls:'finale',
       text:'✨ <b>익숙한 엑셀화면에서, 일하면서 투자공부하기</b><br><span style="font-size:15px;opacity:0.95;">excel-stocktrading-gm.vercel.app</span>',
