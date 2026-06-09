@@ -3325,34 +3325,31 @@ async function runDemo(){
     dRemove(chartArrow);
     await dCheckStop();
 
-    // ─── 6. 2월 20일 캔들 클릭 → 그날 뉴스 ───
+    // ─── 6. 캔들 클릭 → 그날 뉴스 (샘플 날짜 자동 선택) ───
     await dNarrate({
       label:'06 · 그날 뉴스 추적',
-      text:'🔍 차트의 <b>2월 20일 캔들</b>을 클릭해보면<br>그날 시세 + 관련 뉴스가 자동 팝업',
+      text:'🔍 차트의 <b>캔들 하나를 클릭</b>하면<br>그날 시세 + 관련 뉴스가 자동 팝업',
       duration:4500
     });
-    // 2월 20일 캔들 찾기 + 강조 + 클릭
-    const candle=document.querySelector('.mini-chart-cell svg g.chart-candle[data-date="20260220"]');
-    let candleRing=null,candleArrow=null;
-    if(candle){
-      candleRing=dRing(candle,4500);
-      candleArrow=dPointAt(candle);
-      await dSleep(2200);
-      dRipple(candle);
-      await dSleep(300);
-      showDateNewsModal(DEMO_STOCK,'20260220');
-      await dSleep(4500);  // 모달 보기
-      closeModal();
-      dRemove(candleRing);
-      dRemove(candleArrow);
-    }else{
-      // 2월 20일이 차트 범위 밖이면 안내
-      await dNarrate({
-        text:'(2월 20일 캔들 표시 범위 밖)',
-        duration:1500
-      });
+    // 차트 데이터에서 적당한 샘플 날짜 자동 선택 (시연용)
+    const cd=chartCache[DEMO_STOCK]||[];
+    let sampleDate=null;
+    if(cd.length>=20){
+      // 차트 범위 안 중간쯤 캔들 자동 선택 (보이는 영역의 1/3 지점)
+      const visible=cd.slice(-state.chartPeriod||cd.length);
+      const idx=Math.floor(visible.length*0.35);
+      sampleDate=String(visible[idx]?.date||'').replace(/-/g,'');
     }
-    await dSleep(600);
+    const candle=sampleDate?document.querySelector(`.mini-chart-cell svg g.chart-candle[data-date="${sampleDate}"]`):null;
+    if(candle&&sampleDate){
+      await dSleep(1200);
+      dRipple(candle);
+      await dSleep(250);
+      showDateNewsModal(DEMO_STOCK,sampleDate);
+      await dSleep(4800);  // 모달 보기
+      closeModal();
+    }
+    await dSleep(700);
     await dCheckStop();
 
     // ─── 7. 시장가 매수 ───
