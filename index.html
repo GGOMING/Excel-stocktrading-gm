@@ -709,14 +709,19 @@ async function fetchOrderbookNaver(code){
   if(!res.ok) throw new Error('orderbook API '+res.status);
   const j=await res.json();
   if(j.error) throw new Error(j.error);
-  if(!j.asks?.length || !j.bids?.length) throw new Error('empty orderbook');
-  // 네이버는 5호가 제공. 5호가 그대로 사용.
+  // 양쪽 다 빈 경우 (장 시작 전/휴장) — 캐시는 빈 상태로 저장하되 에러는 throw하지 않음
+  if(j.empty || (!j.asks?.length && !j.bids?.length)){
+    orderbookCache[code]={asks:[],bids:[],totalAsk:0,totalBid:0,real:true,empty:true,reason:j.reason||'호가 없음',t:Date.now()};
+    return;
+  }
+  // 한쪽만 있어도 OK (예: 상한가/하한가 도달 시)
   orderbookCache[code]={
-    asks:j.asks,           // [매도1(best), ..., 매도5]
-    bids:j.bids,           // [매수1(best), ..., 매수5]
+    asks:j.asks||[],       // [매도1(best, lowest) ... 매도N(highest)]
+    bids:j.bids||[],       // [매수1(best, highest) ... 매수N(lowest)]
     totalAsk:j.totalAsk||0,
     totalBid:j.totalBid||0,
-    levels:5,
+    askLevels:j.askLevels||(j.asks?.length||0),
+    bidLevels:j.bidLevels||(j.bids?.length||0),
     real:true,
     t:Date.now()
   };
@@ -1508,7 +1513,8 @@ function renderQuoteDetail(){
     `<td class="subheader">거래대금</td><td class="right">${q?fmt(q.amount):'-'}</td>`
   );
   left.push(`<td colspan="6">&nbsp;</td>`);
-  left.push(`<td class="header-cell" colspan="6">▣ 5단계 호가 ${ob?.real?'(실시간 네이버)':'(mock)'}</td>`);
+  const labelTag=ob?.empty?'(데이터 없음)':ob?.real?'(실시간 네이버)':'(mock)';
+  left.push(`<td class="header-cell" colspan="6">▣ 5단계 호가 ${labelTag}</td>`);
   left.push(
     `<td class="subheader" colspan="2">매도잔량</td>`+
     `<td class="subheader" colspan="2">호가</td>`+
@@ -1516,27 +1522,34 @@ function renderQuoteDetail(){
   );
   if(!ob){
     left.push(`<td class="center mute" colspan="6">(호가 정보 없음 — 새로고침)</td>`);
+  }else if(ob.empty){
+    left.push(`<td class="center mute" colspan="6">${esc(ob.reason||'호가 데이터 없음')}</td>`);
   }else{
-    const N=ob.levels||ob.asks.length||5;
-    for(let i=N-1;i>=0;i--){
-      const a=ob.asks[i]||{price:0,qty:0};
+    const Na=ob.asks.length, Nb=ob.bids.length;
+    // 매도호가: 위(높은가)→아래(낮은가, best ask)
+    for(let i=Na-1;i>=0;i--){
+      const a=ob.asks[i];
+      if(!a||!a.price) continue;
       left.push(
-        `<td class="ask-row" colspan="2">${a.qty?fmt(a.qty):'-'}</td>`+
-        `<td class="ask-price" colspan="2">${a.price?fmt(a.price):'-'}</td>`+
+        `<td class="ask-row" colspan="2">${fmt(a.qty)}</td>`+
+        `<td class="ask-price" colspan="2">${fmt(a.price)}</td>`+
         `<td colspan="2">&nbsp;</td>`
       );
     }
+    // 현재가 행
     left.push(
       `<td colspan="2">&nbsp;</td>`+
       `<td class="cur-price-row ${q&&q.change>=0?'up':'down'}" colspan="2">${q?fmt(q.price):'-'} (${q?fmtPct(q.changePct):'-'})</td>`+
       `<td colspan="2">&nbsp;</td>`
     );
-    for(let i=0;i<N;i++){
-      const b=ob.bids[i]||{price:0,qty:0};
+    // 매수호가: 위(높은가, best bid)→아래(낮은가)
+    for(let i=0;i<Nb;i++){
+      const b=ob.bids[i];
+      if(!b||!b.price) continue;
       left.push(
         `<td colspan="2">&nbsp;</td>`+
-        `<td class="bid-price" colspan="2">${b.price?fmt(b.price):'-'}</td>`+
-        `<td class="bid-row" colspan="2">${b.qty?fmt(b.qty):'-'}</td>`
+        `<td class="bid-price" colspan="2">${fmt(b.price)}</td>`+
+        `<td class="bid-row" colspan="2">${fmt(b.qty)}</td>`
       );
     }
     if(ob.totalAsk||ob.totalBid){
@@ -1941,18 +1954,22 @@ function renderBuy(){
   left.push(`<td colspan="6">&nbsp;</td>`);
   left.push(`<td class="header-cell" colspan="6">▣ 5단계 호가 ${ob?.real?'(실시간 네이버)':'(mock)'}</td>`);
   left.push(`<td class="subheader" colspan="2">매도잔량</td><td class="subheader" colspan="2">호가</td><td class="subheader" colspan="2">매수잔량</td>`);
-  if(ob){
-    const N=ob.levels||ob.asks.length||5;
-    for(let i=N-1;i>=0;i--){
-      const a=ob.asks[i]||{price:0,qty:0};
-      left.push(`<td class="ask-row" colspan="2">${a.qty?fmt(a.qty):'-'}</td><td class="ask-price" colspan="2">${a.price?fmt(a.price):'-'}</td><td colspan="2">&nbsp;</td>`);
+  if(ob&&!ob.empty&&(ob.asks?.length||ob.bids?.length)){
+    const Na=ob.asks.length, Nb=ob.bids.length;
+    for(let i=Na-1;i>=0;i--){
+      const a=ob.asks[i];
+      if(!a||!a.price) continue;
+      left.push(`<td class="ask-row" colspan="2">${fmt(a.qty)}</td><td class="ask-price" colspan="2">${fmt(a.price)}</td><td colspan="2">&nbsp;</td>`);
     }
-    for(let i=0;i<N;i++){
-      const b=ob.bids[i]||{price:0,qty:0};
-      left.push(`<td colspan="2">&nbsp;</td><td class="bid-price" colspan="2">${b.price?fmt(b.price):'-'}</td><td class="bid-row" colspan="2">${b.qty?fmt(b.qty):'-'}</td>`);
+    for(let i=0;i<Nb;i++){
+      const b=ob.bids[i];
+      if(!b||!b.price) continue;
+      left.push(`<td colspan="2">&nbsp;</td><td class="bid-price" colspan="2">${fmt(b.price)}</td><td class="bid-row" colspan="2">${fmt(b.qty)}</td>`);
     }
+  }else if(ob?.empty){
+    left.push(`<td class="mute center" colspan="6">${esc(ob.reason||'호가 데이터 없음')}</td>`);
   }else{
-    left.push(`<td class="mute center" colspan="6">(호가 정보 없음)</td>`);
+    left.push(`<td class="mute center" colspan="6">(호가 정보 없음 — 새로고침)</td>`);
   }
   left.push(`<td colspan="6">&nbsp;</td>`);
   left.push(`<td class="header-cell" colspan="6">▣ 최근 매수 내역</td>`);
@@ -2025,18 +2042,22 @@ function renderSell(){
   left.push(`<td colspan="6">&nbsp;</td>`);
   left.push(`<td class="header-cell" colspan="6">▣ 5단계 호가 ${ob?.real?'(실시간 네이버)':'(mock)'}</td>`);
   left.push(`<td class="subheader" colspan="2">매도잔량</td><td class="subheader" colspan="2">호가</td><td class="subheader" colspan="2">매수잔량</td>`);
-  if(ob){
-    const N=ob.levels||ob.asks.length||5;
-    for(let i=N-1;i>=0;i--){
-      const a=ob.asks[i]||{price:0,qty:0};
-      left.push(`<td class="ask-row" colspan="2">${a.qty?fmt(a.qty):'-'}</td><td class="ask-price" colspan="2">${a.price?fmt(a.price):'-'}</td><td colspan="2">&nbsp;</td>`);
+  if(ob&&!ob.empty&&(ob.asks?.length||ob.bids?.length)){
+    const Na=ob.asks.length, Nb=ob.bids.length;
+    for(let i=Na-1;i>=0;i--){
+      const a=ob.asks[i];
+      if(!a||!a.price) continue;
+      left.push(`<td class="ask-row" colspan="2">${fmt(a.qty)}</td><td class="ask-price" colspan="2">${fmt(a.price)}</td><td colspan="2">&nbsp;</td>`);
     }
-    for(let i=0;i<N;i++){
-      const b=ob.bids[i]||{price:0,qty:0};
-      left.push(`<td colspan="2">&nbsp;</td><td class="bid-price" colspan="2">${b.price?fmt(b.price):'-'}</td><td class="bid-row" colspan="2">${b.qty?fmt(b.qty):'-'}</td>`);
+    for(let i=0;i<Nb;i++){
+      const b=ob.bids[i];
+      if(!b||!b.price) continue;
+      left.push(`<td colspan="2">&nbsp;</td><td class="bid-price" colspan="2">${fmt(b.price)}</td><td class="bid-row" colspan="2">${fmt(b.qty)}</td>`);
     }
+  }else if(ob?.empty){
+    left.push(`<td class="mute center" colspan="6">${esc(ob.reason||'호가 데이터 없음')}</td>`);
   }else{
-    left.push(`<td class="mute center" colspan="6">(호가 정보 없음)</td>`);
+    left.push(`<td class="mute center" colspan="6">(호가 정보 없음 — 새로고침)</td>`);
   }
   left.push(`<td colspan="6">&nbsp;</td>`);
   left.push(`<td class="header-cell" colspan="6">▣ 최근 매도 내역</td>`);
