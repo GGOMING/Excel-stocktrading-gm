@@ -290,6 +290,83 @@
   }
   body.mobile-mode .toast{min-width:0;}
 
+  /* === 데모 모드 (사용 시연용) === */
+  .demo-overlay{
+    position:fixed;top:78px;left:50%;
+    transform:translateX(-50%);
+    background:rgba(20,22,30,0.92);color:#fff;
+    padding:22px 36px;border-radius:14px;
+    font-size:17px;font-weight:500;line-height:1.65;
+    min-width:420px;max-width:680px;text-align:center;
+    z-index:9999;
+    box-shadow:0 16px 50px rgba(0,0,0,0.45),0 0 0 1px rgba(255,255,255,0.06);
+    backdrop-filter:blur(14px);
+    animation:demoSlideIn 0.45s cubic-bezier(.2,.9,.3,1.2);
+    pointer-events:none;
+  }
+  .demo-overlay .step-num{
+    font-size:11px;color:#F37321;font-weight:800;
+    letter-spacing:3px;margin-bottom:10px;
+    text-transform:uppercase;
+  }
+  .demo-overlay .text{margin-bottom:16px;font-size:18px;}
+  .demo-overlay .text b{color:#F9C99A;font-weight:700;}
+  .demo-overlay .progress{
+    height:3px;background:rgba(255,255,255,0.18);
+    border-radius:2px;overflow:hidden;
+  }
+  .demo-overlay .progress .bar{
+    height:100%;background:linear-gradient(90deg,#F37321,#FFA365);
+    width:0;transition:width linear;
+  }
+  .demo-overlay.intro{
+    background:linear-gradient(135deg,rgba(20,22,30,0.95),rgba(45,30,20,0.95));
+  }
+  .demo-overlay.finale{
+    background:linear-gradient(135deg,rgba(243,115,33,0.95),rgba(229,95,10,0.95));
+    font-size:22px;
+  }
+  .demo-overlay.finale .step-num,
+  .demo-overlay.finale .progress{display:none;}
+  .demo-overlay.tip{
+    border-left:6px solid #F37321;
+    padding-left:30px;
+  }
+  @keyframes demoSlideIn{
+    from{transform:translateX(-50%) translateY(-30px) scale(0.95);opacity:0;}
+    to{transform:translateX(-50%) translateY(0) scale(1);opacity:1;}
+  }
+  /* 강조 효과 (요소 펄스) */
+  .demo-highlight{position:relative;z-index:9997;}
+  .demo-highlight::after{
+    content:'';position:absolute;inset:-6px;
+    border:3px solid #F37321;border-radius:8px;
+    pointer-events:none;
+    animation:demoPulse 1.1s infinite;
+    box-shadow:0 0 30px rgba(243,115,33,0.7),inset 0 0 20px rgba(243,115,33,0.3);
+  }
+  @keyframes demoPulse{
+    0%,100%{opacity:0.7;transform:scale(1);}
+    50%{opacity:1;transform:scale(1.025);}
+  }
+  /* 데모 제어 UI */
+  .demo-ctrl{
+    position:fixed;bottom:50px;right:20px;
+    z-index:9999;
+    background:rgba(20,22,30,0.85);color:#fff;
+    padding:10px 16px;border-radius:24px;
+    font-size:12px;font-weight:600;
+    box-shadow:0 4px 16px rgba(0,0,0,0.3);
+    backdrop-filter:blur(8px);
+    cursor:pointer;
+    display:flex;align-items:center;gap:8px;
+  }
+  .demo-ctrl:hover{background:rgba(229,95,10,0.95);}
+  .demo-ctrl .dot{
+    width:8px;height:8px;border-radius:50%;
+    background:#F37321;animation:demoPulse 1.2s infinite;
+  }
+
   /* =============================================================
      모바일 모드 (body.mobile-mode 또는 자동감지)
      ============================================================= */
@@ -2958,6 +3035,275 @@ document.addEventListener('keydown',e=>{
 });
 
 /* =================================================================
+   사용 시연 데모 모드 (한화손해보험 시나리오)
+   - URL ?demo=1 자동 실행 / window.runDemo() 콘솔 실행
+   - Win+G (게임바) 또는 OBS로 화면 녹화하면 사용 영상 완성
+   ================================================================= */
+const DEMO_STOCK='000370';
+const DEMO_NAME='한화손해보험';
+let demoRunning=false;
+let demoStopRequested=false;
+let demoOverlay=null;
+
+const dSleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+function dStopBtn(){
+  let btn=document.getElementById('demoCtrl');
+  if(!btn){
+    btn=document.createElement('div');
+    btn.id='demoCtrl';btn.className='demo-ctrl';
+    btn.innerHTML='<span class="dot"></span> 데모 진행 중 · 클릭하여 정지';
+    btn.onclick=()=>{demoStopRequested=true;btn.remove();};
+    document.body.appendChild(btn);
+  }
+}
+function dStopBtnRemove(){
+  const btn=document.getElementById('demoCtrl');
+  if(btn) btn.remove();
+}
+
+function dHighlight(selector,duration=2500){
+  const el=typeof selector==='string'?document.querySelector(selector):selector;
+  if(!el) return;
+  el.classList.add('demo-highlight');
+  setTimeout(()=>el.classList.remove('demo-highlight'),duration);
+}
+
+async function dNarrate(opts){
+  if(demoOverlay){demoOverlay.remove();demoOverlay=null;}
+  const o=document.createElement('div');
+  o.className='demo-overlay '+(opts.cls||'tip');
+  o.innerHTML=`
+    ${opts.label?`<div class="step-num">${opts.label}</div>`:''}
+    <div class="text">${opts.text||''}</div>
+    <div class="progress"><div class="bar"></div></div>
+  `;
+  document.body.appendChild(o);
+  demoOverlay=o;
+  const bar=o.querySelector('.bar');
+  const dur=opts.duration||3500;
+  bar.style.transitionDuration=dur+'ms';
+  await dSleep(60);
+  bar.style.width='100%';
+  await dSleep(dur);
+  o.style.opacity='0';
+  o.style.transition='opacity 0.32s';
+  await dSleep(320);
+  if(demoOverlay===o){demoOverlay.remove();demoOverlay=null;}
+}
+
+async function dType(selector,text,delay=85){
+  const el=document.querySelector(selector);
+  if(!el) return;
+  el.focus();el.value='';
+  for(const ch of text){
+    if(demoStopRequested) return;
+    el.value+=ch;
+    el.dispatchEvent(new Event('input',{bubbles:true}));
+    await dSleep(delay);
+  }
+}
+
+async function dCheckStop(){
+  if(demoStopRequested) throw new Error('demo stopped by user');
+}
+
+async function runDemo(){
+  if(demoRunning){console.log('데모 이미 진행 중');return;}
+  demoRunning=true;demoStopRequested=false;
+  dStopBtn();
+
+  try{
+    // ─── 인트로 ───
+    await dNarrate({
+      cls:'intro',label:'데모 시작',
+      text:'🎬 <b>한화손보 모의투자 플랫폼</b><br><span style="opacity:0.85;font-size:15px;">엑셀로 일하는 척, 진짜로는 투자 실력 쌓기</span>',
+      duration:4200
+    });
+    await dCheckStop();
+
+    // ─── 1. 주요지표 시작화면 ───
+    switchSheet('dashboard');
+    await dSleep(700);
+    await dNarrate({
+      label:'01 · 첫 화면',
+      text:'💡 시작 화면은 <b>월간실적분석.xlsx</b><br>완벽한 Excel 위장 — 셀, 리본, 시트탭까지',
+      duration:4000
+    });
+    await dCheckStop();
+
+    // ─── 2. 시드머니 설정 ───
+    switchSheet('settings');
+    await dSleep(600);
+    await dNarrate({
+      label:'02 · 시드머니',
+      text:'💰 <b>시드머니 5천만원</b>으로 시작<br>1만원부터 무제한까지 자유롭게 설정 가능',
+      duration:3500
+    });
+    dHighlight('#setSeed',3500);
+    const seedInput=document.getElementById('setSeed');
+    if(seedInput){
+      await dSleep(800);
+      seedInput.value='50000000';
+      seedInput.dispatchEvent(new Event('input',{bubbles:true}));
+      await dSleep(1200);
+      applySeedInline();
+      await dSleep(800);
+    }
+    await dCheckStop();
+
+    // ─── 3. 매수 시트 이동 + 종목 검색 ───
+    switchSheet('buy');
+    await dSleep(900);
+    await dNarrate({
+      label:'03 · 종목 검색',
+      text:`💡 종목 검색 — <b>${DEMO_NAME}</b><br>이름·코드 모두 가능 (KRX 전종목 3,900+ 지원)`,
+      duration:3500
+    });
+    dHighlight('#bTicker',6000);
+    await dSleep(500);
+    await dType('#bTicker',DEMO_NAME,90);
+    await dSleep(800);
+    // 강제로 ticker 변경 트리거 (parseTickerInput으로 코드 추출됨)
+    state.selectedTicker=DEMO_STOCK;
+    saveState();
+    ensureNews(DEMO_STOCK);
+    try{await fetchQuote(DEMO_STOCK);}catch(e){}
+    await ensureChartData(DEMO_STOCK).catch(()=>{});
+    render();
+    await dSleep(1500);
+    await dCheckStop();
+
+    // ─── 4. 5호가 + 차트 + 뉴스 동시 표시 ───
+    await dNarrate({
+      label:'04 · 통합 화면',
+      text:'✨ <b>5호가 + 일봉 차트 + 관련 뉴스</b><br>한 화면에 모든 정보가 자동 표시',
+      duration:4500
+    });
+    await dCheckStop();
+
+    // ─── 5. 차트 휠 줌 시연 ───
+    await dNarrate({
+      label:'05 · 차트 휠 줌',
+      text:'💡 차트 위에서 <b>마우스 휠</b><br>↓ 기간 확대 (3개월 → 1년 → 3년)<br>↑ 단기 확대 (1주 → 2주)',
+      duration:4500
+    });
+    dHighlight('.mini-chart-cell',5000);
+    // 실제로 휠 조작 시뮬레이션
+    await dSleep(1500);
+    state.chartPeriod=120;saveState();render();
+    await dSleep(1200);
+    state.chartPeriod=240;saveState();render();
+    await dSleep(1200);
+    state.chartPeriod=60;saveState();render();
+    await dSleep(800);
+    await dCheckStop();
+
+    // ─── 6. 캔들 클릭 안내 ───
+    await dNarrate({
+      label:'06 · 그날 뉴스 추적',
+      text:'🔍 차트의 <b>캔들 클릭</b> → 그날 뉴스 자동 팝업<br>"이날 왜 급등했지?" 즉시 추적 가능',
+      duration:4800
+    });
+    await dCheckStop();
+
+    // ─── 7. 시장가 매수 ───
+    const bQty=document.getElementById('bQty');
+    if(bQty){
+      bQty.value='50';
+      bQty.dispatchEvent(new Event('input',{bubbles:true}));
+    }
+    await dNarrate({
+      label:'07 · 매수 실행',
+      text:`🛒 <b>${DEMO_NAME} 50주</b> 시장가 매수`,
+      duration:3000
+    });
+    dHighlight('td.btn-buy',2500);
+    await dSleep(1500);
+    onBuy();
+    await dSleep(3500);  // 체결 토스트 표시
+    await dCheckStop();
+
+    // ─── 8. 잔고 시트 ───
+    switchSheet('balance');
+    await dSleep(900);
+    await dNarrate({
+      label:'08 · 잔고 확인',
+      text:'💼 잔고 시트 — 보유 종목 자동 집계<br>💡 종목명 <b>더블클릭</b> → 매수 화면 바로 진입',
+      duration:5000
+    });
+    await dCheckStop();
+
+    // ─── 9. 지정가 매도 ───
+    switchSheet('sell');
+    await dSleep(900);
+    await dNarrate({
+      label:'09 · 지정가 매도',
+      text:'📋 지정가 매도 — <b>+5% 가격</b>에 걸어두기<br>시세 도달 시 자동 체결',
+      duration:4000
+    });
+    const sType=document.getElementById('sType');
+    if(sType){sType.value='LIMIT';sType.dispatchEvent(new Event('input',{bubbles:true}));}
+    const sQty=document.getElementById('sQty');
+    if(sQty){sQty.value='20';sQty.dispatchEvent(new Event('input',{bubbles:true}));}
+    const sPrice=document.getElementById('sPrice');
+    const q=quoteCache[DEMO_STOCK];
+    if(sPrice&&q){
+      sPrice.value=roundToTick(Math.round(q.price*1.05));
+      sPrice.dispatchEvent(new Event('input',{bubbles:true}));
+    }
+    await dSleep(1200);
+    dHighlight('td.btn-sell',2000);
+    await dSleep(500);
+    onSell();
+    await dSleep(3000);
+    await dCheckStop();
+
+    // ─── 10. Boss Key ───
+    switchSheet('buy');
+    await dSleep(600);
+    await dNarrate({
+      label:'10 · Boss Key',
+      text:'🎯 <b>부장님 다가오면?</b><br>Ctrl + \\ → 즉시 빈 워크시트로 위장<br>다시 Ctrl + \\ → 원래 화면 복귀',
+      duration:4500
+    });
+    panicHide();  // 위장
+    await dSleep(2800);
+    panicHide();  // 복귀
+    await dSleep(800);
+    await dCheckStop();
+
+    // ─── 11. 시장지표 ───
+    switchSheet('market');
+    await dSleep(900);
+    await dNarrate({
+      label:'11 · 시장 현황',
+      text:'📊 <b>KOSPI/KOSDAQ 실시간 지수</b><br>상승률 · 하락률 · 거래대금 TOP 10 자동 집계',
+      duration:4200
+    });
+    await dCheckStop();
+
+    // ─── 12. 마무리 ───
+    switchSheet('dashboard');
+    await dSleep(900);
+    await dNarrate({
+      cls:'finale',
+      text:'✨ <b>엑셀로 일하는 척, 진짜로는 투자 실력 쌓기</b><br><span style="font-size:15px;opacity:0.95;">excel-stocktrading-gm.vercel.app</span>',
+      duration:6000
+    });
+
+  }catch(e){
+    console.log('Demo ended:',e.message);
+  }finally{
+    demoRunning=false;
+    if(demoOverlay){demoOverlay.remove();demoOverlay=null;}
+    dStopBtnRemove();
+  }
+}
+window.runDemo=runDemo;
+window.stopDemo=()=>{demoStopRequested=true;};
+
+/* =================================================================
    INIT
    ================================================================= */
 (async function init(){
@@ -3002,6 +3348,15 @@ document.addEventListener('keydown',e=>{
     document.getElementById('autoLabel').textContent='자동(ON)';
     autoTimer=setInterval(refreshAllQuotes,5000);
   }
+
+  // URL ?demo=1 이면 자동 데모 실행 (4초 후 — 녹화 시작 시간 확보)
+  try{
+    const params=new URLSearchParams(window.location.search);
+    if(params.get('demo')==='1'){
+      setStatus('🎬 데모 자동 실행 예정 (4초 후) — Win+G로 녹화 시작하세요');
+      setTimeout(()=>runDemo(),4000);
+    }
+  }catch(e){}
 })();
 </script>
 </body>
