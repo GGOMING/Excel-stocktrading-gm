@@ -243,6 +243,53 @@
   svg.chart .ma60{stroke:#7a3eb1;stroke-width:1;fill:none;}
   svg.chart .legend{font-size:10px;}
 
+  /* === 체결 알림 토스트 === */
+  .toast-container{
+    position:fixed;top:54px;right:20px;z-index:2000;
+    display:flex;flex-direction:column;gap:10px;
+    pointer-events:none;max-width:420px;
+  }
+  .toast{
+    background:#fff;border-left:5px solid #217346;
+    padding:14px 32px 14px 16px;border-radius:6px;
+    box-shadow:0 6px 20px rgba(0,0,0,0.22);
+    min-width:300px;pointer-events:auto;position:relative;
+    animation:toast-in 0.28s cubic-bezier(.2,.9,.3,1.2);
+  }
+  .toast.buy{border-left-color:#c53030;background:linear-gradient(90deg,#fef1f2 0%,#fff 18%);}
+  .toast.sell{border-left-color:#2b6cb0;background:linear-gradient(90deg,#eff5fb 0%,#fff 18%);}
+  .toast.pending{border-left-color:#dd8800;background:linear-gradient(90deg,#fff7e6 0%,#fff 18%);}
+  .toast.fail{border-left-color:#a0203a;background:linear-gradient(90deg,#fce8ec 0%,#fff 18%);}
+  .toast.cancel{border-left-color:#888;background:linear-gradient(90deg,#f3f3f3 0%,#fff 18%);}
+  .toast .ttl{
+    font-size:13px;font-weight:700;color:#1a1a1a;
+    display:flex;align-items:center;gap:8px;margin-bottom:6px;
+    letter-spacing:0.3px;
+  }
+  .toast .ic{font-size:18px;line-height:1;}
+  .toast .bd{font-size:12px;line-height:1.65;color:#444;}
+  .toast .bd b{color:#111;font-weight:700;}
+  .toast .x{
+    position:absolute;top:6px;right:10px;
+    cursor:pointer;color:#aaa;font-size:14px;
+    width:18px;height:18px;display:flex;align-items:center;justify-content:center;
+    border-radius:50%;
+  }
+  .toast .x:hover{background:#eee;color:#333;}
+  .toast.fade-out{animation:toast-out 0.22s ease forwards;}
+  @keyframes toast-in{
+    from{transform:translateX(30px) scale(0.95);opacity:0;}
+    to{transform:translateX(0) scale(1);opacity:1;}
+  }
+  @keyframes toast-out{
+    from{transform:translateX(0);opacity:1;max-height:200px;margin-bottom:10px;}
+    to{transform:translateX(30px);opacity:0;max-height:0;margin-bottom:0;padding-top:0;padding-bottom:0;}
+  }
+  body.mobile-mode .toast-container{
+    top:auto;bottom:32px;right:8px;left:8px;max-width:none;
+  }
+  body.mobile-mode .toast{min-width:0;}
+
   /* =============================================================
      모바일 모드 (body.mobile-mode 또는 자동감지)
      ============================================================= */
@@ -1176,8 +1223,8 @@ function placeOrder(side,orderType,code,qty,limitPrice){
   if(!q) return alert('현재가가 없습니다. 새로 고침 후 다시 시도하세요.');
 
   if(orderType==='MARKET'){
-    if(side==='BUY') executeBuy(code,qty,q.price);
-    else executeSell(code,qty,q.price);
+    if(side==='BUY') executeBuy(code,qty,q.price,'시장가');
+    else executeSell(code,qty,q.price,'시장가');
     return;
   }
   // LIMIT
@@ -1185,8 +1232,8 @@ function placeOrder(side,orderType,code,qty,limitPrice){
   if(!limitPrice||limitPrice<=0) return alert('지정가를 입력하세요.');
   limitPrice=roundToTick(limitPrice);
   // immediate fill if marketable
-  if(side==='BUY'&&limitPrice>=q.price){return executeBuy(code,qty,Math.min(limitPrice,q.price));}
-  if(side==='SELL'&&limitPrice<=q.price){return executeSell(code,qty,Math.max(limitPrice,q.price));}
+  if(side==='BUY'&&limitPrice>=q.price){return executeBuy(code,qty,Math.min(limitPrice,q.price),'지정가(즉시)');}
+  if(side==='SELL'&&limitPrice<=q.price){return executeSell(code,qty,Math.max(limitPrice,q.price),'지정가(즉시)');}
   // 미체결로 보류 — 체결 시점에 현금/포지션 차감 (사전 차감 X)
   const gross=limitPrice*qty;
   const fee=Math.floor(gross*state.config.feeRate);
@@ -1211,6 +1258,12 @@ function placeOrder(side,orderType,code,qty,limitPrice){
   });
   saveState();render();
   setStatus(`지정가 ${side==='BUY'?'매수':'매도'} 접수: ${stock.name} ${qty}주 @ ${fmt(limitPrice)} (체결 시 차감)`);
+  const diffPct=((limitPrice-q.price)/q.price*100).toFixed(2);
+  showToast({
+    type:'pending',icon:'📋',
+    title:`지정가 ${side==='BUY'?'매수':'매도'} 접수`,
+    body:`<b>${esc(stock.name)}</b> (${code}) <b>${fmt(qty)}주</b> @ <b>${fmt(limitPrice)}</b>원<br>현재가 ${fmt(q.price)}원 대비 ${diffPct>=0?'+':''}${diffPct}%<br>시세 도달 시 자동 체결 (미체결 시트에서 확인/취소 가능)`
+  });
 }
 
 // 미체결 매수 주문의 예약 자금 합계
@@ -1230,7 +1283,7 @@ function pendingSellQty(code){
   return sum;
 }
 
-function executeBuy(code,qty,price){
+function executeBuy(code,qty,price,orderTypeLabel){
   const stock=STOCK_BY_CODE[code];
   const gross=price*qty;
   const fee=Math.floor(gross*state.config.feeRate);
@@ -1241,24 +1294,41 @@ function executeBuy(code,qty,price){
   const newAvg=Math.round((cur.qty*cur.avgPrice+gross)/newQty);
   state.positions[code]={qty:newQty,avgPrice:newAvg};
   state.cash-=total;
-  state.history.unshift({type:'BUY',orderType:'MARKET',ticker:code,name:stock.name,qty,price,fee,tax:0,total,time:Date.now()});
+  const otLabel=orderTypeLabel||'시장가';
+  state.history.unshift({type:'BUY',orderType:otLabel==='지정가'?'LIMIT':'MARKET',ticker:code,name:stock.name,qty,price,fee,tax:0,total,time:Date.now()});
   saveState();render();
   setStatus(`매수 체결: ${stock.name} ${qty}주 @ ${fmt(price)}`);
+  showToast({
+    type:'buy',icon:'✅',
+    title:`매수 체결 · ${otLabel}`,
+    body:`<b>${esc(stock.name)}</b> (${code}) <b>${fmt(qty)}주</b> @ <b>${fmt(price)}</b>원<br>총 차감 <b>${fmt(total)}</b>원 (수수료 ${fmt(fee)}) · 신규 평단 <b>${fmt(newAvg)}</b>`
+  });
 }
-function executeSell(code,qty,price){
+function executeSell(code,qty,price,orderTypeLabel){
   const stock=STOCK_BY_CODE[code];
   const cur=state.positions[code];
   if(!cur||cur.qty<qty) return alert('보유수량이 부족합니다.');
+  const avgBefore=cur.avgPrice;
   const gross=price*qty;
   const fee=Math.floor(gross*state.config.feeRate);
   const tax=Math.floor(gross*state.config.taxRate);
   const net=gross-fee-tax;
+  const cost=avgBefore*qty;
+  const realPL=net-cost;
+  const realPLPct=cost?(realPL/cost)*100:0;
   cur.qty-=qty;
   if(cur.qty===0) delete state.positions[code];
   state.cash+=net;
-  state.history.unshift({type:'SELL',orderType:'MARKET',ticker:code,name:stock.name,qty,price,fee,tax,total:net,time:Date.now()});
+  const otLabel=orderTypeLabel||'시장가';
+  state.history.unshift({type:'SELL',orderType:otLabel==='지정가'?'LIMIT':'MARKET',ticker:code,name:stock.name,qty,price,fee,tax,total:net,time:Date.now()});
   saveState();render();
   setStatus(`매도 체결: ${stock.name} ${qty}주 @ ${fmt(price)}`);
+  const plColor=realPL>=0?'#c53030':'#2b6cb0';
+  showToast({
+    type:'sell',icon:'✅',
+    title:`매도 체결 · ${otLabel}`,
+    body:`<b>${esc(stock.name)}</b> (${code}) <b>${fmt(qty)}주</b> @ <b>${fmt(price)}</b>원<br>실수령 <b>${fmt(net)}</b>원 (수수료 ${fmt(fee)} · 거래세 ${fmt(tax)})<br>실현손익 <b style="color:${plColor};">${realPL>=0?'+':''}${fmt(realPL)}원 (${realPL>=0?'+':''}${realPLPct.toFixed(2)}%)</b>`
+  });
 }
 
 function checkPendingOrders(){
@@ -1268,13 +1338,17 @@ function checkPendingOrders(){
     const q=quoteCache[o.ticker];
     if(!q){remain.push(o);continue;}
     if(o.side==='BUY'&&q.price<=o.price){
-      // 체결 시점에 현금 차감
       const gross=o.price*o.qty;
       const fee=o.fee;
       const total=gross+fee;
       if(total>state.cash){
-        setStatus(`⚠️ 지정가 매수 체결 실패 (예수금 부족 ${fmt(total)} > ${fmt(state.cash)}): ${o.name} 주문 자동 취소`);
-        continue;  // remain에 추가하지 않음 → 제거됨
+        setStatus(`⚠️ 지정가 매수 체결 실패 (예수금 부족): ${o.name} 자동 취소`);
+        showToast({
+          type:'fail',icon:'⚠️',duration:6000,
+          title:'지정가 매수 체결 실패',
+          body:`<b>${esc(o.name)}</b> (${o.ticker}) <b>${fmt(o.qty)}주</b> @ ${fmt(o.price)}원<br>예수금 부족 (필요 ${fmt(total)} > 보유 ${fmt(state.cash)})<br>주문 자동 취소됨`
+        });
+        continue;
       }
       state.cash-=total;
       const cur=state.positions[o.ticker]||{qty:0,avgPrice:0};
@@ -1283,22 +1357,41 @@ function checkPendingOrders(){
       state.positions[o.ticker]={qty:newQty,avgPrice:newAvg};
       state.history.unshift({type:'BUY',orderType:'LIMIT',ticker:o.ticker,name:o.name,qty:o.qty,price:o.price,fee,tax:0,total,time:Date.now()});
       setStatus(`지정가 매수 체결: ${o.name} ${o.qty}주 @ ${fmt(o.price)}`);
+      showToast({
+        type:'buy',icon:'🎯',
+        title:'지정가 매수 자동 체결',
+        body:`<b>${esc(o.name)}</b> (${o.ticker}) <b>${fmt(o.qty)}주</b> @ <b>${fmt(o.price)}</b>원<br>총 차감 <b>${fmt(total)}</b>원 · 신규 평단 <b>${fmt(newAvg)}</b><br>시세 도달로 자동 체결됨`
+      });
     }else if(o.side==='SELL'&&q.price>=o.price){
-      // 체결 시점에 보유수량 차감
       const cur=state.positions[o.ticker];
       if(!cur||cur.qty<o.qty){
-        setStatus(`⚠️ 지정가 매도 체결 실패 (보유수량 부족): ${o.name} 주문 자동 취소`);
+        setStatus(`⚠️ 지정가 매도 체결 실패 (보유수량 부족): ${o.name} 자동 취소`);
+        showToast({
+          type:'fail',icon:'⚠️',duration:6000,
+          title:'지정가 매도 체결 실패',
+          body:`<b>${esc(o.name)}</b> (${o.ticker}) <b>${fmt(o.qty)}주</b> @ ${fmt(o.price)}원<br>보유수량 부족 (필요 ${fmt(o.qty)} > 보유 ${fmt(cur?cur.qty:0)})<br>주문 자동 취소됨`
+        });
         continue;
       }
+      const avgBefore=cur.avgPrice;
       const gross=o.price*o.qty;
       const fee=Math.floor(gross*state.config.feeRate);
       const tax=Math.floor(gross*state.config.taxRate);
       const net=gross-fee-tax;
+      const cost=avgBefore*o.qty;
+      const realPL=net-cost;
+      const realPLPct=cost?(realPL/cost)*100:0;
       cur.qty-=o.qty;
       if(cur.qty===0) delete state.positions[o.ticker];
       state.cash+=net;
       state.history.unshift({type:'SELL',orderType:'LIMIT',ticker:o.ticker,name:o.name,qty:o.qty,price:o.price,fee,tax,total:net,time:Date.now()});
       setStatus(`지정가 매도 체결: ${o.name} ${o.qty}주 @ ${fmt(o.price)}`);
+      const plColor=realPL>=0?'#c53030':'#2b6cb0';
+      showToast({
+        type:'sell',icon:'🎯',
+        title:'지정가 매도 자동 체결',
+        body:`<b>${esc(o.name)}</b> (${o.ticker}) <b>${fmt(o.qty)}주</b> @ <b>${fmt(o.price)}</b>원<br>실수령 <b>${fmt(net)}</b>원<br>실현손익 <b style="color:${plColor};">${realPL>=0?'+':''}${fmt(realPL)}원 (${realPL>=0?'+':''}${realPLPct.toFixed(2)}%)</b>`
+      });
     }else{
       remain.push(o);
     }
@@ -1309,10 +1402,16 @@ function checkPendingOrders(){
 function cancelPending(id){
   const idx=state.pendingOrders.findIndex(o=>o.id===id);
   if(idx<0) return;
+  const o=state.pendingOrders[idx];
   // 미체결은 사전 차감이 없으므로 단순 제거
   state.pendingOrders.splice(idx,1);
   saveState();render();
   setStatus('주문 취소 완료');
+  showToast({
+    type:'cancel',icon:'✖',duration:3500,
+    title:'주문 취소 완료',
+    body:`<b>${esc(o.name)}</b> (${o.ticker}) ${o.side==='BUY'?'매수':'매도'} ${fmt(o.qty)}주 @ ${fmt(o.price)}원<br>미체결 주문 제거`
+  });
 }
 
 /* =================================================================
@@ -1457,8 +1556,9 @@ function renderDashboard(){
     p.rows.forEach((pos,i)=>{
       const cls=pos.pl>=0?'pos-pl':'neg-pl';
       const dc=pos.dayChg>=0?'pos-pl':'neg-pl';
+      const dblAttr=`ondblclick="gotoBuy('${pos.code}')" style="cursor:pointer;" title="더블클릭 → 매수주문"`;
       html+=`<tr${i%2?' class="alt"':''}><th class="row-header">${r++}</th>`+
-        `<td class="center">${pos.code}</td><td>${pos.name}</td>`+
+        `<td class="center" ${dblAttr}>${pos.code}</td><td ${dblAttr}>${pos.name}</td>`+
         `<td class="center mute">${pos.sector||'-'}</td>`+
         `<td class="right">${fmt(pos.qty)}</td>`+
         `<td class="right">${fmt(pos.avg)}</td>`+
@@ -1731,9 +1831,9 @@ function miniChartSVG(code){
   if(!data.length){
     return '<div style="padding:200px 40px;text-align:center;color:#999;font-size:13px;">차트 로딩 중...</div>';
   }
-  // 크게 확대된 사이즈
-  const W=720, priceH=560, volH=160, padTop=32, padL=14, padR=68, gap=14, xPad=32;
-  const H=padTop+priceH+gap+volH+xPad;
+  // 컴팩트 사이즈 (가로형, 22행 안에 들어맞도록)
+  const W=720, priceH=290, volH=85, padTop=26, padL=14, padR=68, gap=10, xPad=26;
+  const H=padTop+priceH+gap+volH+xPad;  // ≈ 437
   const n=data.length;
   const innerW=W-padL-padR;
   const cw=innerW/n;
@@ -1883,21 +1983,23 @@ function buildSheetWithChartAndNews(left,code){
   // 차트 헤더는 row 1
   const leftRow1=left[0]||`<td colspan="6">&nbsp;</td>`;
   html+=rowStart(1)+leftRow1+`<td class="header-cell" colspan="4">▣ ${stock?.name||code} 차트 [${chartPeriodLabel(state.chartPeriod)}]</td>`+rowEnd();
-  // 차트 셀: row 2부터 rowspan으로 차트가 차지
-  const chartRows=Math.max(left.length-1,36);
+  // 차트 셀: row 2부터 최대 21행 rowspan (= row 22까지로 제한)
+  const chartRows=Math.min(21,Math.max(left.length-1,18));
   const leftRow2=left[1]||`<td colspan="6">&nbsp;</td>`;
   html+=rowStart(2)+leftRow2+`<td colspan="4" rowspan="${chartRows}" class="mini-chart-cell" onwheel="onChartWheel(event)">${miniChartSVG(code)}<div class="mini-chart-hint">휠↓ 기간 확대 (${chartPeriodLabel(state.chartPeriod)}) 휠↑ 축소</div></td>`+rowEnd();
-  // 나머지 left 행들
+  // 나머지 left 행들 (차트 rowspan 범위 끝나면 우측에 빈 4cols 추가)
   for(let i=2;i<left.length;i++){
-    html+=rowStart(i+1)+left[i]+rowEnd();
+    const rowIdx=i+1;
+    const rightFiller=rowIdx>1+chartRows?`<td colspan="4">&nbsp;</td>`:'';
+    html+=rowStart(rowIdx)+left[i]+rightFiller+rowEnd();
   }
-  // left 부족하면 빈 행 추가
+  // left가 chart보다 짧으면 좌측 빈 행 패딩
   for(let i=left.length;i<1+chartRows;i++){
     html+=rowStart(i+1)+`<td colspan="6">&nbsp;</td>`+rowEnd();
   }
-  // 뉴스 (전폭 10cols)
+  // 뉴스 (전폭 10cols) — chart와 left 중 늦게 끝나는 곳 이후
   const news=newsBottomRows(code);
-  const startRow=1+chartRows+1;
+  const startRow=Math.max(1+chartRows+1,left.length+1);
   news.forEach((nr,i)=>{
     html+=rowStart(startRow+i)+nr+rowEnd();
   });
@@ -2193,7 +2295,7 @@ function renderBalance(){
       const cls=pos.pl>=0?'pos-pl':'neg-pl';
       const selBg=pos.code===code?'style="background:#fff7d6;"':'';
       left.push(
-        `<td class="center" ${selBg} onclick="selectFromBalance('${pos.code}')" style="cursor:pointer;">${pos.code} ${pos.name}</td>`+
+        `<td class="center" ${selBg} onclick="selectFromBalance('${pos.code}')" ondblclick="gotoBuy('${pos.code}')" style="cursor:pointer;" title="클릭: 뉴스 / 더블클릭: 매수주문">${pos.code} ${pos.name}</td>`+
         `<td class="right">${fmt(pos.qty)}</td>`+
         `<td class="right">${fmt(pos.avg)}</td>`+
         `<td class="right">${fmt(pos.price)}</td>`+
@@ -2239,6 +2341,17 @@ function selectFromBalance(code){
   render();
 }
 
+// 종목명 더블클릭 → 매수주문 시트로 이동 (주요지표/잔고/관심종목 공통)
+function gotoBuy(code){
+  if(!code) return;
+  state.selectedTicker=code;
+  saveState();
+  ensureNews(code);
+  if(!quoteCache[code]) fetchQuote(code).catch(()=>{});
+  ensureChartData(code).then(()=>render()).catch(()=>{});
+  switchSheet('buy');
+}
+
 /* ===== Watchlist ===== */
 function renderWatch(){
   const cols=10;
@@ -2263,9 +2376,10 @@ function renderWatch(){
       const s=STOCK_BY_CODE[code]||{};
       const q=quoteCache[code];
       const cls=q&&q.change>=0?'pos-pl':'neg-pl';
+      const dblAttr=`ondblclick="gotoBuy('${code}')" style="cursor:pointer;" title="더블클릭 → 매수주문"`;
       html+=`<tr${i%2?' class="alt"':''}><th class="row-header">${r++}</th>`+
-        `<td class="center">${code}</td>`+
-        `<td>${s.name||code}</td>`+
+        `<td class="center" ${dblAttr}>${code}</td>`+
+        `<td ${dblAttr}>${s.name||code}</td>`+
         `<td class="right">${q?fmt(q.price):'-'}</td>`+
         `<td class="right ${cls}">${q?(q.change>=0?'+':'')+fmt(q.change):'-'}</td>`+
         `<td class="right ${cls}">${q?fmtPct(q.changePct):'-'}</td>`+
@@ -2692,6 +2806,36 @@ function switchSheet(name){
   }
 }
 function setStatus(s){document.getElementById('statusLeft').textContent=s;}
+
+/* ===== 체결 알림 토스트 ===== */
+function ensureToastContainer(){
+  let c=document.getElementById('toastContainer');
+  if(!c){
+    c=document.createElement('div');
+    c.id='toastContainer';c.className='toast-container';
+    document.body.appendChild(c);
+  }
+  return c;
+}
+function showToast(opts){
+  const c=ensureToastContainer();
+  const t=document.createElement('div');
+  t.className='toast '+(opts.type||'');
+  t.innerHTML=`
+    <span class="x" title="닫기">✕</span>
+    <div class="ttl"><span class="ic">${opts.icon||'✓'}</span>${opts.title||''}</div>
+    <div class="bd">${opts.body||''}</div>`;
+  t.querySelector('.x').addEventListener('click',()=>dismissToast(t));
+  c.appendChild(t);
+  const dur=opts.duration!=null?opts.duration:4200;
+  if(dur>0) setTimeout(()=>dismissToast(t),dur);
+  return t;
+}
+function dismissToast(t){
+  if(!t||t.classList.contains('fade-out')) return;
+  t.classList.add('fade-out');
+  setTimeout(()=>{if(t.parentElement) t.remove();},250);
+}
 
 /* ===== 뷰모드 (모바일/데스크탑) ===== */
 function applyViewMode(){
