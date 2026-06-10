@@ -1,9 +1,10 @@
 // /api/news?code=005930&n=3  — 종목별 뉴스 (ETF/ETN은 대표 편입종목 뉴스로 대체)
 // Verified 2026-06: /api/news/stock/{code}?pageSize=N
 
-// 인기 ETF/ETN 대표 편입종목 매핑 (Naver가 holdings API 미공개라서 하드코딩)
+// 인기 ETF 대표 편입종목 매핑 (Naver가 holdings API 미공개라서 하드코딩)
+// 키: ETF 종목코드, 값: 대표 편입종목 코드 배열 (이 종목들의 뉴스가 ETF 뉴스로 노출됨)
 const ETF_REPRESENTATIVES = {
-  // 코스피200 추종
+  // === 코스피200 추종 (대형주 시총 TOP) ===
   '069500': ['005930', '000660', '035420'],  // KODEX 200
   '102110': ['005930', '000660', '035420'],  // TIGER 200
   '152100': ['005930', '000660', '035420'],  // ARIRANG 200
@@ -13,41 +14,49 @@ const ETF_REPRESENTATIVES = {
   '252670': ['005930', '000660', '035420'],  // KODEX 200선물인버스2X
   '114800': ['005930', '000660', '035420'],  // KODEX 인버스
   '252710': ['005930', '000660', '035420'],  // TIGER 200선물인버스2X
-  // 코스닥150
+  '148020': ['005930', '000660', '035420'],  // KBSTAR 200
+  '105190': ['005930', '000660', '035420'],  // KINDEX 200
+  // === 코스닥150 ===
   '233740': ['247540', '086520', '091990'],  // KODEX 코스닥150
   '229200': ['247540', '086520', '091990'],  // TIGER 코스닥150
   '251340': ['247540', '086520', '091990'],  // KODEX 코스닥150선물인버스
-  // 반도체
+  // === 반도체 ===
   '091160': ['005930', '000660', '009150'],  // KODEX 반도체
   '091230': ['005930', '000660', '009150'],  // TIGER 반도체
   '396500': ['005930', '000660', '009150'],  // TIGER 반도체TOP10
-  '305540': ['005930', '000660', '009150'],  // KODEX 반도체
-  // 2차전지
+  // === 2차전지 ===
   '305720': ['373220', '006400', '051910'],  // KODEX 2차전지산업
   '364980': ['373220', '006400', '051910'],  // TIGER KRX2차전지K-뉴딜
   '305540': ['373220', '006400', '247540'],  // KODEX 2차전지핵심소재
-  // 자동차
+  '371460': ['373220', '006400', '051910'],  // TIGER 2차전지테마
+  // === 자동차 ===
   '091180': ['005380', '000270', '012330'],  // KODEX 자동차
-  // 금융/은행
-  '091170': ['105560', '055550', '316140'],  // KODEX 은행
-  '091220': ['105560', '055550', '316140'],  // TIGER 은행
-  '139220': ['105560', '055550', '316140'],  // TIGER 200금융
-  // 바이오/헬스케어
-  '091990': ['207940', '068270', '196170'],  // KODEX 바이오
+  // === 금융/은행/증권/보험 ===
+  '091170': ['105560', '055550', '000810'],  // KODEX 은행
+  '091220': ['105560', '055550', '000810'],  // TIGER 은행
+  '139220': ['105560', '055550', '000810'],  // TIGER 200금융
+  '102970': ['005830', '000810', '003690'],  // KODEX 증권
+  '157500': ['005830', '000810', '003690'],  // KODEX 보험 (한화손보 005830 포함)
+  // === 바이오/헬스케어 ===
+  '244580': ['207940', '068270', '196170'],  // KBSTAR 헬스케어
   '266390': ['207940', '068270', '196170'],  // TIGER 헬스케어
-  '143860': ['207940', '068270', '196170'],  // KOSEF 미국S&P500
-  // 인터넷/IT
+  '244670': ['207940', '068270', '196170'],  // KODEX 바이오
+  // === 인터넷/IT/소프트웨어 ===
   '364690': ['035420', '035720', '376300'],  // TIGER KRX인터넷K-뉴딜
-  '157450': ['035420', '035720'],            // TIGER 소프트웨어
-  // 화학/소재
+  '157490': ['035420', '035720', '293490'],  // TIGER 소프트웨어
+  // === 화학/소재/철강 ===
   '139250': ['051910', '011170', '009830'],  // TIGER 200화학에너지
   '117700': ['005490', '003490', '028050'],  // KODEX 철강
-  // 미디어/엔터/게임
-  '157500': ['041510', '035900', '352820'],  // KODEX 미디어&엔터
-  '157490': ['251270', '293490', '112040'],  // TIGER 소프트웨어
+  // === 미디어/엔터/게임 ===
+  '266360': ['041510', '035900', '352820'],  // KODEX 미디어&엔터
   '364990': ['251270', '293490', '112040'],  // TIGER KRX게임K-뉴딜
-  // 미국 주요 ETF (한국 뉴스 매핑 어려움 → 그대로 사용)
-  // 360750 TIGER 미국S&P500, 133690 TIGER 미국나스닥100 등은 매핑 안 함
+  // === 통신/유틸리티 ===
+  '266370': ['017670', '030200', '032640'],  // KODEX 통신
+  // === 건설/조선 ===
+  '117680': ['009540', '042660', '329180'],  // KODEX 건설
+  '139230': ['009540', '042660', '329180'],  // TIGER 200건설
+  // 주: 미국주식 추종 ETF (360750 TIGER 미국S&P500, 133690 TIGER 미국나스닥100 등)은
+  //    한국 뉴스로 매핑하기 부적합하여 의도적으로 미매핑 → ETF 자체 뉴스 사용
 };
 
 export default async function handler(req, res) {
@@ -114,33 +123,71 @@ export default async function handler(req, res) {
 
   async function fetchOne(targetCode, n) { return fetchPage(targetCode, 1, n * 3); }
 
-  // 페이지네이션 검색: 특정 날짜 또는 그 이전까지 거슬러 찾기
-  async function searchByDate(targetCode, date, want, maxPages = 60) {
+  // 페이지의 최신/최오래된 날짜 추출
+  function pageDateRange(arr) {
+    const dates = arr.map(a => (a._rawTs || '').slice(0, 8)).filter(Boolean);
+    if (!dates.length) return { newest: null, oldest: null };
+    dates.sort();
+    return { newest: dates[dates.length - 1], oldest: dates[0] };
+  }
+
+  // 이진 탐색 + 주변 페이지 스캔 (인기 종목 깊은 날짜도 빠르게 도달)
+  async function searchByDate(targetCode, date, want, maxPages = 400) {
     const found = [];
     const seen = new Set();
     let scannedPages = 0;
-    let lastBatchDate = null;
-    for (let page = 1; page <= maxPages; page++) {
-      scannedPages = page;
-      const articles = await fetchPage(targetCode, page, 10);
-      if (articles.length === 0) break;
-      for (const a of articles) {
+
+    // Step 1: 이진 탐색으로 target date 주변 페이지 찾기
+    let lo = 1, hi = maxPages;
+    let targetPage = 1;
+    const cache = new Map();  // page → result
+    async function getPage(p) {
+      if (cache.has(p)) return cache.get(p);
+      scannedPages++;
+      const r = await fetchPage(targetCode, p, 10);
+      cache.set(p, r);
+      return r;
+    }
+
+    while (lo <= hi && scannedPages < 12) {
+      const mid = Math.floor((lo + hi) / 2);
+      const arr = await getPage(mid);
+      if (arr.length === 0) { hi = mid - 1; continue; }
+      const { oldest, newest } = pageDateRange(arr);
+      if (newest && newest < date) {
+        // 이 페이지가 모두 너무 오래됨 → 더 최신 페이지로
+        hi = mid - 1;
+      } else if (oldest && oldest > date) {
+        // 이 페이지가 모두 너무 최신 → 더 오래된 페이지로
+        lo = mid + 1;
+      } else {
+        // target date를 포함하거나 걸쳐있음
+        targetPage = mid;
+        break;
+      }
+      targetPage = mid;
+    }
+
+    // Step 2: target 주변 ±8 페이지 스캔
+    const scanStart = Math.max(1, targetPage - 4);
+    const scanEnd = Math.min(maxPages, targetPage + 12);
+    for (let page = scanStart; page <= scanEnd; page++) {
+      const arr = await getPage(page);
+      if (arr.length === 0) break;
+      for (const a of arr) {
         const d = (a._rawTs || '').slice(0, 8);
         if (d === date && !seen.has(a.id)) {
           seen.add(a.id);
           found.push(a);
         }
       }
-      if (found.length >= want) break;
-      // 페이지가 모두 타겟 날짜보다 오래된 게 되면 더 이상 안 나옴
-      const oldestInPage = articles
-        .map(a => (a._rawTs || '').slice(0, 8))
-        .filter(Boolean)
-        .sort()[0];
-      lastBatchDate = oldestInPage;
-      if (oldestInPage && oldestInPage < date) break;
+      if (found.length >= want * 2) break;
+      // 페이지가 모두 target보다 오래되면 stop
+      const { newest } = pageDateRange(arr);
+      if (newest && newest < date) break;
     }
-    return { articles: found, scannedPages, lastBatchDate };
+
+    return { articles: found, scannedPages, targetPage };
   }
 
   try {
